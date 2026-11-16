@@ -1,0 +1,19 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.log
+__pycache__/
+*.py[cod]
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Local database data
+data/
+
+# Prisma generated artifacts
+apps/api/src/generated/prisma/

@@ -1,0 +1,20 @@
+{
+  "name": "qiconect",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run build --workspace=@qiconect/contracts && concurrently -k -n API,WEB \"npm run dev --workspace=@qiconect/api\" \"npm run dev --workspace=@qiconect/web\"",
+    "build": "npm run build --workspace=@qiconect/contracts && npm run build --workspace=@qiconect/api && npm run build --workspace=@qiconect/web",
+    "typecheck": "npm run build --workspace=@qiconect/contracts && npm run typecheck --workspace=@qiconect/api && npm run typecheck --workspace=@qiconect/web",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}

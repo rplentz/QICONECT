@@ -1,0 +1,164 @@
+import { useEffect, useState, type FormEvent } from "react";
+import { apiRequest, type Appointment, type Patient, type Session, type Therapist, type Therapy } from "../../lib/api.js";
+
+interface AppointmentsPageProps {
+  session: Session;
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+}
+
+export function AppointmentsPage({ session }: AppointmentsPageProps) {
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [therapists, setTherapists] = useState<Therapist[]>([]);
+  const [therapies, setTherapies] = useState<Therapy[]>([]);
+  const [patients, setPatients] = useState<Patient[]>([]);
+  const [form, setForm] = useState({ therapistMembershipId: "", therapyId: "", patientMembershipId: "", startsAt: "" });
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const canBookForPatient = session.activeClinic.role !== "PATIENT";
+
+  async function load() {
+    const requests = [
+      apiRequest<{ appointments: Appointment[] }>("/appointments"),
+      apiRequest<{ therapists: Therapist[] }>("/therapists"),
+      apiRequest<{ therapies: Therapy[] }>("/catalog"),
+      ...(canBookForPatient ? [apiRequest<{ patients: Patient[] }>("/patients")] : []),
+    ] as const;
+    const [appointmentResult, therapistResult, catalogResult, patientResult] = await Promise.all(requests);
+    setAppointments(appointmentResult.appointments);
+    setTherapists(therapistResult.therapists);
+    setTherapies(catalogResult.therapies);
+    setPatients(patientResult?.patients ?? []);
+  }
+
+  useEffect(() => {
+    load().catch((reason: Error) => setError(reason.message));
+  }, []);
+
+  async function book(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await apiRequest("/appointments", {
+        method: "POST",
+        body: JSON.stringify({
+          ...form,
+          patientMembershipId: form.patientMembershipId || undefined,
+          startsAt: new Date(form.startsAt).toISOString(),
+        }),
+      });
+      setNotice("Atendimento agendado.");
+      setForm({ ...form, startsAt: "" });
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Não foi possível agendar.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancel(appointment: Appointment) {
+    const reason = canBookForPatient ? window.prompt("Informe o motivo do cancelamento:") : undefined;
+    if (canBookForPatient && !reason) return;
+    if (!window.confirm("Deseja cancelar este atendimento?")) return;
+    setError("");
+    setNotice("");
+    try {
+      const result = await apiRequest<{ status: string; notifications: string }>(`/appointments/${appointment.id}/cancel`, {
+        method: "POST",
+        body: JSON.stringify(reason ? { reason } : {}),
+      });
+      setNotice(
+        result.notifications === "NOT_CONFIGURED"
+          ? "Atendimento cancelado. E-mail/WhatsApp foram registrados, mas o envio exige configurar os provedores."
+          : "Atendimento cancelado e notificações enviadas.",
+      );
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Não foi possível cancelar.");
+    }
+  }
+
+  async function reschedule(appointment: Appointment) {
+    const suggestedDate = new Date(new Date(appointment.startsAt).getTime() + 24 * 60 * 60 * 1000);
+    const suggested = new Date(suggestedDate.getTime() - suggestedDate.getTimezoneOffset() * 60_000)
+      .toISOString()
+      .slice(0, 16);
+    const input = window.prompt("Novo horário local (AAAA-MM-DDTHH:mm):", suggested);
+    if (!input) return;
+    const startsAt = new Date(input);
+    if (Number.isNaN(startsAt.getTime())) {
+      setError("Informe uma data e horário válidos.");
+      return;
+    }
+
+    setError("");
+    setNotice("");
+    try {
+      const result = await apiRequest<{ notifications: string }>(`/appointments/${appointment.id}/reschedule`, {
+        method: "POST",
+        body: JSON.stringify({ startsAt: startsAt.toISOString() }),
+      });
+      setNotice(
+        result.notifications === "NOT_CONFIGURED"
+          ? "Atendimento remarcado. As notificações foram registradas, mas o envio exige configurar os provedores."
+          : "Atendimento remarcado e notificações enviadas.",
+      );
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Não foi possível remarcar.");
+    }
+  }
+
+  const upcoming = appointments.filter((appointment) => appointment.status === "CONFIRMED");
+
+  return (
+    <div className="page-content">
+      <div className="page-heading">
+        <div><p className="eyebrow">Organização de horários</p><h1>Agenda</h1><p className="muted">Agendamentos da clínica selecionada.</p></div>
+      </div>
+      {error && <p className="alert alert-error">{error}</p>}
+      {notice && <p className="alert alert-success">{notice}</p>}
+      <form className="panel form-panel" onSubmit={book}>
+        <div className="panel-heading"><div><h2>Novo agendamento</h2><p className="muted">Horários são confirmados após validação da disponibilidade.</p></div><span className="soft-badge">Fuso: {session.activeClinic.timezone}</span></div>
+        <div className="form-grid">
+          {canBookForPatient && (
+            <label>Paciente<select required value={form.patientMembershipId} onChange={(event) => setForm({ ...form, patientMembershipId: event.target.value })}>
+              <option value="">Selecione</option>{patients.map((patient) => <option key={patient.membershipId} value={patient.membershipId}>{patient.fullName}</option>)}
+            </select></label>
+          )}
+          <label>Terapeuta<select required value={form.therapistMembershipId} onChange={(event) => setForm({ ...form, therapistMembershipId: event.target.value })}>
+            <option value="">Selecione</option>{therapists.map((therapist) => <option key={therapist.membershipId} value={therapist.membershipId}>{therapist.fullName}</option>)}
+          </select></label>
+          <label>Terapia<select required value={form.therapyId} onChange={(event) => setForm({ ...form, therapyId: event.target.value })}>
+            <option value="">Selecione</option>{therapies.map((therapy) => <option key={therapy.id} value={therapy.id}>{therapy.name} · {therapy.durationMinutes} min</option>)}
+          </select></label>
+          <label>Data e horário<input type="datetime-local" required min={new Date().toISOString().slice(0, 16)} value={form.startsAt} onChange={(event) => setForm({ ...form, startsAt: event.target.value })} /></label>
+        </div>
+        <button className="button button-primary" disabled={busy}>{busy ? "Confirmando..." : "Confirmar agendamento"}</button>
+      </form>
+      <section className="panel">
+        <div className="panel-heading"><div><h2>Atendimentos confirmados</h2><p className="muted">Cancelamentos pelo paciente exigem pelo menos quatro horas de antecedência.</p></div><span className="soft-badge">{upcoming.length} confirmados</span></div>
+        {upcoming.length === 0 ? <p className="empty-state">Nenhum atendimento confirmado.</p> : (
+          <div className="appointment-list">
+            {upcoming.map((appointment) => (
+              <article className="appointment-row" key={appointment.id}>
+                <div className="appointment-date"><strong>{new Intl.DateTimeFormat("pt-BR", { day: "2-digit" }).format(new Date(appointment.startsAt))}</strong><span>{new Intl.DateTimeFormat("pt-BR", { month: "short" }).format(new Date(appointment.startsAt)).replace(".", "")}</span></div>
+                <div className="appointment-main"><strong>{appointment.therapyName}</strong><span className="muted">{session.activeClinic.role === "PATIENT" ? appointment.therapistName : appointment.patientName}</span></div>
+                <span className="appointment-time">{formatDate(appointment.startsAt)}</span>
+                <span className="status-pill status-confirmed">Confirmado</span>
+                <button className="button button-secondary" onClick={() => reschedule(appointment)}>Remarcar</button>
+                <button className="button button-danger" onClick={() => cancel(appointment)}>Cancelar</button>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
