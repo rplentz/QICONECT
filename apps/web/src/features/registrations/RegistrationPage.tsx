@@ -45,7 +45,6 @@ interface ResourceDefinition {
   description: string;
   fields: FieldDefinition[];
   columns: Array<{ key: string; label: string }>;
-  canCreate?: boolean;
 }
 
 type RegistrationOptions = Record<string, SelectOption[]>;
@@ -66,7 +65,6 @@ const definitions: Record<RegistrationId, ResourceDefinition> = {
   clinic: {
     title: "Clínica",
     description: "Dados cadastrais da clínica ativa.",
-    canCreate: false,
     fields: [
       { name: "name", label: "Nome", type: "text", required: true },
       { name: "cnpj", label: "CNPJ", type: "text" },
@@ -397,6 +395,7 @@ export function RegistrationPage({ resource, session }: RegistrationPageProps) {
   const definition = definitions[resource];
   const [records, setRecords] = useState<RegistrationRecord[]>([]);
   const [options, setOptions] = useState<RegistrationOptions>({});
+  const [archivedClinics, setArchivedClinics] = useState<Array<{ id: string; name: string }>>([]);
   const [form, setForm] = useState<Record<string, string | boolean | string[]>>(() => initialForm(resource));
   const [editingId, setEditingId] = useState<string | null>(null);
   const [selectedProtocolId, setSelectedProtocolId] = useState("");
@@ -404,14 +403,20 @@ export function RegistrationPage({ resource, session }: RegistrationPageProps) {
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [pendingActionId, setPendingActionId] = useState<string | null>(null);
 
   async function load() {
-    const [recordResult, optionResult] = await Promise.all([
+    const archivedClinicsRequest = resource === "clinic"
+      ? apiRequest<{ clinics: Array<{ id: string; name: string }> }>("/registrations/archived-clinics")
+      : Promise.resolve({ clinics: [] as Array<{ id: string; name: string }> });
+    const [recordResult, optionResult, archivedClinicsResult] = await Promise.all([
       apiRequest<{ records: RegistrationRecord[] }>(`/registrations/${resource}`),
       apiRequest<{ options: RegistrationOptions }>("/registrations/options"),
+      archivedClinicsRequest,
     ]);
     setRecords(recordResult.records);
     setOptions(optionResult.options);
+    setArchivedClinics(archivedClinicsResult.clinics);
     if (resource === "clinic" && recordResult.records[0]) {
       const clinic = recordResult.records[0];
       setEditingId(clinic.id);
@@ -427,13 +432,19 @@ export function RegistrationPage({ resource, session }: RegistrationPageProps) {
     setEditingId(null);
     setSelectedProtocolId("");
     setForm(initialForm(resource));
+    setArchivedClinics([]);
+    const archivedClinicsRequest = resource === "clinic"
+      ? apiRequest<{ clinics: Array<{ id: string; name: string }> }>("/registrations/archived-clinics")
+      : Promise.resolve({ clinics: [] as Array<{ id: string; name: string }> });
     Promise.all([
       apiRequest<{ records: RegistrationRecord[] }>(`/registrations/${resource}`),
       apiRequest<{ options: RegistrationOptions }>("/registrations/options"),
-    ]).then(([recordResult, optionResult]) => {
+      archivedClinicsRequest,
+    ]).then(([recordResult, optionResult, archivedClinicsResult]) => {
       if (!active) return;
       setRecords(recordResult.records);
       setOptions(optionResult.options);
+      setArchivedClinics(archivedClinicsResult.clinics);
       if (resource === "clinic" && recordResult.records[0]) {
         const clinic = recordResult.records[0];
         setEditingId(clinic.id);
@@ -512,6 +523,15 @@ export function RegistrationPage({ resource, session }: RegistrationPageProps) {
         method: editingId ? "PATCH" : "POST",
         body: JSON.stringify(body),
       });
+      if (resource === "clinic" && !editingId) {
+        if (!response.id) throw new Error("A clínica foi criada sem retornar um identificador.");
+        await apiRequest("/auth/clinic", {
+          method: "POST",
+          body: JSON.stringify({ clinicId: response.id }),
+        });
+        window.location.reload();
+        return;
+      }
       setNotice(editingId ? "Cadastro atualizado." : "Cadastro salvo.");
       if (resource === "protocol" && response.id) setSelectedProtocolId(response.id);
       if (resource !== "clinic" && !editingId) setForm(initialForm(resource));
@@ -524,19 +544,53 @@ export function RegistrationPage({ resource, session }: RegistrationPageProps) {
     }
   }
 
-  async function toggleActive(record: RegistrationRecord) {
-    const active = !(record.active === true || record.active === 1);
+  async function setActive(record: RegistrationRecord, active: boolean) {
+    const deleting = !active;
+    const entityName = String(record.fullName ?? record.name ?? record.email ?? record.id);
+    if (resource === "clinic" && deleting) {
+      const confirmed = window.confirm(
+        `Arquivar a clínica "${entityName}"? Isso encerra o acesso atual. Você precisará entrar novamente em outra clínica ativa para restaurá-la.`,
+      );
+      if (!confirmed) return;
+    } else if (["user", "patient", "therapist", "specialty", "therapy"].includes(resource)) {
+      const action = deleting ? "Excluir" : "Restaurar";
+      const detail = deleting ? "O registro será inativado, mas permanecerá no banco e manterá seus vínculos." : "O registro voltará a ficar ativo.";
+      if (!window.confirm(`${action} "${entityName}"? ${detail}`)) return;
+    }
+
     setError("");
     setNotice("");
+    setPendingActionId(record.id);
     try {
       await apiRequest(`/registrations/${resource}/${encodeURIComponent(record.id)}`, {
         method: "PATCH",
         body: JSON.stringify({ active }),
       });
-      setNotice(active ? "Cadastro ativado." : "Cadastro inativado.");
+      if (resource === "clinic" && deleting) {
+        window.location.reload();
+        return;
+      }
+      setNotice(active ? "Cadastro restaurado." : "Cadastro excluído logicamente e inativado.");
       await load();
     } catch (reason) {
       setError(actionErrorMessage(reason));
+    } finally {
+      setPendingActionId(null);
+    }
+  }
+
+  async function restoreClinic(clinic: { id: string; name: string }) {
+    if (!window.confirm(`Restaurar a clínica "${clinic.name}"?`)) return;
+    setError("");
+    setNotice("");
+    setPendingActionId(clinic.id);
+    try {
+      await apiRequest(`/registrations/clinic/${encodeURIComponent(clinic.id)}/restore`, { method: "POST" });
+      window.location.reload();
+    } catch (reason) {
+      setError(actionErrorMessage(reason));
+    } finally {
+      setPendingActionId(null);
     }
   }
 
@@ -581,6 +635,9 @@ export function RegistrationPage({ resource, session }: RegistrationPageProps) {
 
   const fields = definition.fields;
   const missingOptions = fields.find((field) => field.optionsKey && field.required && (options[field.optionsKey]?.length ?? 0) === 0);
+  const canArchiveClinic = session.clinics.some(
+    (clinic) => clinic.clinicId !== session.activeClinic.id && clinic.role === "CLINIC_ADMIN",
+  );
 
   return (
     <div className="page-content registration-page">
@@ -607,15 +664,18 @@ export function RegistrationPage({ resource, session }: RegistrationPageProps) {
           Cadastre primeiro: {missingOptions.optionsKey === "therapies" ? "terapia" : missingOptions.optionsKey === "specialties" ? "especialidade" : missingOptions.optionsKey === "charts" ? "prontuário" : missingOptions.optionsKey === "diagnosisProtocols" ? "vínculo de diagnóstico e etapa de protocolo" : "os registros relacionados"}.
         </p>
       )}
+      {resource === "clinic" && !canArchiveClinic && (
+        <p className="muted">Para arquivar esta clínica, seu usuário precisa ter acesso administrativo a outra clínica ativa.</p>
+      )}
       <form className="panel form-panel registration-form" onSubmit={submit}>
         <div className="panel-heading">
           <div>
-            <h2>{resource === "clinic" ? "Dados da clínica" : editingId ? `Editar ${recordLabels[resource].singular}` : recordLabels[resource].create}</h2>
+            <h2>{resource === "clinic" ? editingId ? "Dados da clínica" : "Nova clínica" : editingId ? `Editar ${recordLabels[resource].singular}` : recordLabels[resource].create}</h2>
             <p className="muted">Campos identificadores e datas de auditoria são gerados pelo sistema.</p>
           </div>
-          {definition.canCreate !== false && (
-            <button type="button" className="button button-secondary" onClick={startCreate}>Limpar formulário</button>
-          )}
+          <button type="button" className="button button-secondary" onClick={startCreate}>
+            {resource === "clinic" ? "Nova clínica" : "Limpar formulário"}
+          </button>
         </div>
         <div className="form-grid">
           {fields.map((field) => {
@@ -710,6 +770,30 @@ export function RegistrationPage({ resource, session }: RegistrationPageProps) {
         </div>
       </form>
 
+      {resource === "clinic" && archivedClinics.length > 0 && (
+        <section className="panel">
+          <div className="panel-heading">
+            <div>
+              <h2>Clínicas arquivadas</h2>
+              <p className="muted">Restaure o acesso a uma clínica vinculada ao seu usuário administrador.</p>
+            </div>
+          </div>
+          <div className="registration-row-actions">
+            {archivedClinics.map((clinic) => (
+              <button
+                key={clinic.id}
+                type="button"
+                className="button button-secondary button-small"
+                disabled={pendingActionId === clinic.id}
+                onClick={() => void restoreClinic(clinic)}
+              >
+                {pendingActionId === clinic.id ? "Restaurando..." : `Restaurar ${clinic.name}`}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
       {resource === "protocol" && (
         <ProtocolStepsPanel
           protocols={records.filter((record) => record.active === 1 || record.active === true).map((record) => ({ id: record.id, name: String(record.name) }))}
@@ -738,19 +822,34 @@ export function RegistrationPage({ resource, session }: RegistrationPageProps) {
                     {definition.columns.map((column) => <td key={column.key}>{displayValue(record[column.key], column.key)}</td>)}
                     <td className="registration-row-actions">
                       {resource !== "agenda" && (
-                        <button className="button button-secondary button-small" onClick={() => startEdit(record)}>Editar</button>
+                        <button type="button" className="button button-secondary button-small" onClick={() => startEdit(record)}>Editar</button>
+                      )}
+                      {resource === "clinic" && (
+                        <button type="button" className="button button-secondary button-small" onClick={() => startEdit(record)}>Editar</button>
                       )}
                       {resource === "agenda" && record.status === "CONFIRMED" && (
                         <>
-                          <button className="button button-secondary button-small" onClick={() => void appointmentAction(record, "reschedule")}>Remarcar</button>
-                          <button className="button button-primary button-small" onClick={() => void appointmentAction(record, "COMPLETED")}>Concluir</button>
-                          <button className="button button-secondary button-small" onClick={() => void appointmentAction(record, "NO_SHOW")}>Falta</button>
-                          <button className="button button-danger button-small" onClick={() => void appointmentAction(record, "cancel")}>Cancelar</button>
+                          <button type="button" className="button button-secondary button-small" onClick={() => void appointmentAction(record, "reschedule")}>Remarcar</button>
+                          <button type="button" className="button button-primary button-small" onClick={() => void appointmentAction(record, "COMPLETED")}>Concluir</button>
+                          <button type="button" className="button button-secondary button-small" onClick={() => void appointmentAction(record, "NO_SHOW")}>Falta</button>
+                          <button type="button" className="button button-danger button-small" onClick={() => void appointmentAction(record, "cancel")}>Cancelar</button>
                         </>
                       )}
-                      {resource !== "clinic" && resource !== "agenda" && "active" in record && (
-                        <button className="button button-secondary button-small" onClick={() => void toggleActive(record)}>
-                          {record.active === true || record.active === 1 ? "Inativar" : "Ativar"}
+                      {resource !== "agenda" && "active" in record && (
+                        <button
+                          type="button"
+                          className={`button button-small ${record.active === true || record.active === 1 ? "button-danger" : "button-secondary"}`}
+                          disabled={pendingActionId === record.id || (resource === "clinic" && !canArchiveClinic)}
+                          title={resource === "clinic" && !canArchiveClinic
+                            ? "Vincule-se como administrador a outra clínica ativa antes de arquivar."
+                            : undefined}
+                          onClick={() => void setActive(record, !(record.active === true || record.active === 1))}
+                        >
+                          {pendingActionId === record.id
+                            ? "Processando..."
+                            : ["user", "patient", "therapist", "specialty", "therapy", "clinic"].includes(resource)
+                              ? record.active === true || record.active === 1 ? "Excluir" : "Restaurar"
+                              : record.active === true || record.active === 1 ? "Inativar" : "Ativar"}
                         </button>
                       )}
                     </td>

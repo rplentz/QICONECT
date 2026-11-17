@@ -44,6 +44,7 @@ A tela não preenche nem exibe contas de demonstração. Ao entrar, a API valida
 
 - Login, logout e sessão em cookie HttpOnly.
 - Vínculos por clínica e troca de clínica restrita às clínicas autorizadas.
+- Cadastros administrativos de clínicas, usuários, pacientes, terapeutas, especialidades e terapias, com criação, consulta, edição, arquivamento lógico e restauração.
 - Cadastro/listagem de pacientes e terapeutas.
 - Catálogo de especialidades e terapias.
 - Regras semanais de disponibilidade de terapeutas.
@@ -54,9 +55,9 @@ A tela não preenche nem exibe contas de demonstração. Ao entrar, a API valida
 
 ## Notificações e limitações
 
-O cancelamento cria registros de notificação para e-mail e WhatsApp, mas **não envia mensagens externas ainda**. É necessário escolher/configurar um provedor de e-mail e um provedor de WhatsApp Business antes de habilitar a entrega real. IA, Bio-Well, pagamentos, recuperação de senha por e-mail, upload de arquivos e administração inicial de múltiplas clínicas também ainda não estão implementados.
+O cancelamento cria registros de notificação para e-mail e WhatsApp, mas **não envia mensagens externas ainda**. É necessário escolher/configurar um provedor de e-mail e um provedor de WhatsApp Business antes de habilitar a entrega real. IA, Bio-Well, pagamentos, recuperação de senha por e-mail e upload de arquivos ainda não estão implementados.
 
-Esta versão é um MVP para desenvolvimento e validação com dados fictícios, não um sistema clínico pronto para produção. Para produção, faltam revisão de segurança e privacidade, implantação HTTPS, provisionamento de clínicas, gestão de segredos, política de retenção/backups e configuração de provedores.
+Esta versão é um MVP para desenvolvimento e validação com dados fictícios, não um sistema clínico pronto para produção. Para produção, faltam revisão de segurança e privacidade, implantação HTTPS, fluxos institucionais de provisionamento de clínicas, gestão de segredos, política de retenção/backups e configuração de provedores.
 
 ## Comandos
 

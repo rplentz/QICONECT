@@ -199,6 +199,178 @@ describe("QIConect API MVP", () => {
     expect(loginStamp.dt_ult_acesso).toBeTruthy();
   });
 
+  it("filters dashboard appointments by clinic date and returns the therapy protocols", async () => {
+    const adminCookie = await login("admin@qiconect.local", "Admin123!");
+    const patientCookie = await login(demoPatient.email, demoPatient.password);
+    const clinic = db.prepare(
+      `SELECT c.id, c.timezone FROM CLINICA c
+       JOIN memberships m ON m.clinic_id = c.id
+       JOIN USUARIO u ON u.id = m.user_id
+       WHERE u.email = 'admin@qiconect.local' LIMIT 1`,
+    ).get() as { id: string; timezone: string };
+    const patient = db.prepare(
+      `SELECT m.id FROM memberships m JOIN USUARIO u ON u.id = m.user_id
+       WHERE u.email = ? AND m.clinic_id = ?`,
+    ).get(demoPatient.email, clinic.id) as { id: string };
+    const therapist = db.prepare(
+      `SELECT m.id FROM memberships m JOIN USUARIO u ON u.id = m.user_id
+       WHERE u.email = 'terapeuta@qiconect.local' AND m.clinic_id = ?`,
+    ).get(clinic.id) as { id: string };
+    const therapy = db.prepare("SELECT id FROM TERAPIA WHERE clinic_id = ? LIMIT 1").get(clinic.id) as { id: string };
+    const clinicDate = new Intl.DateTimeFormat("en-CA", {
+      timeZone: clinic.timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    const startsAt = new Date(`${clinicDate}T12:00:00.000Z`);
+    const endsAt = new Date(startsAt.getTime() + 60 * 60_000);
+    const createdAt = new Date().toISOString();
+    const appointmentId = crypto.randomUUID();
+    db.prepare(
+      `INSERT INTO AGENDA
+       (id, clinic_id, patient_membership_id, therapist_membership_id, terapia_id, dt_inicio, dt_fim, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'CONFIRMED', ?, ?)`,
+    ).run(
+      appointmentId, clinic.id, patient.id, therapist.id, therapy.id,
+      startsAt.toISOString(), endsAt.toISOString(), createdAt, createdAt,
+    );
+
+    const createProtocol = await fetch(`${baseUrl}/api/v1/registrations/protocol`, {
+      method: "POST",
+      headers: { cookie: adminCookie, "content-type": "application/json" },
+      body: JSON.stringify({
+        therapyId: therapy.id,
+        name: "Protocolo da agenda",
+        description: "Protocolo exibido pela visão geral",
+        objective: "Validar vínculo com a terapia",
+        active: true,
+      }),
+    });
+    expect(createProtocol.status).toBe(201);
+    const protocol = await createProtocol.json() as { id: string };
+    const createStep = await fetch(`${baseUrl}/api/v1/registrations/protocol-steps`, {
+      method: "POST",
+      headers: { cookie: adminCookie, "content-type": "application/json" },
+      body: JSON.stringify({ protocolId: protocol.id, sequence: 1, description: "Etapa de avaliação" }),
+    });
+    expect(createStep.status).toBe(201);
+
+    const createChart = await fetch(`${baseUrl}/api/v1/registrations/chart`, {
+      method: "POST",
+      headers: { cookie: adminCookie, "content-type": "application/json" },
+      body: JSON.stringify({ patientId: patient.id, openedAt: clinicDate }),
+    });
+    expect(createChart.status).toBe(201);
+    const chart = await createChart.json() as { id: string };
+    const createOlderEncounter = await fetch(`${baseUrl}/api/v1/registrations/encounter`, {
+      method: "POST",
+      headers: { cookie: adminCookie, "content-type": "application/json" },
+      body: JSON.stringify({
+        chartId: chart.id,
+        therapistId: therapist.id,
+        therapyId: therapy.id,
+        attendedAt: new Date(startsAt.getTime() - 24 * 60 * 60_000).toISOString(),
+        status: "COMPLETED",
+      }),
+    });
+    expect(createOlderEncounter.status).toBe(201);
+    const createEncounter = await fetch(`${baseUrl}/api/v1/registrations/encounter`, {
+      method: "POST",
+      headers: { cookie: adminCookie, "content-type": "application/json" },
+      body: JSON.stringify({
+        chartId: chart.id,
+        therapistId: therapist.id,
+        therapyId: therapy.id,
+        appointmentId,
+        attendedAt: startsAt.toISOString(),
+        status: "COMPLETED",
+      }),
+    });
+    expect(createEncounter.status).toBe(201);
+    const encounter = await createEncounter.json() as { id: string };
+
+    const dashboardResponse = await fetch(
+      `${baseUrl}/api/v1/dashboard?date=${encodeURIComponent(clinicDate)}`,
+      { headers: { cookie: adminCookie } },
+    );
+    expect(dashboardResponse.status).toBe(200);
+    const dashboard = await dashboardResponse.json() as {
+      selectedDate: string;
+      appointmentsForDate: Array<{
+        id: string;
+        therapyId: string;
+        patientName: string;
+        therapistName: string;
+      }>;
+    };
+    expect(dashboard.selectedDate).toBe(clinicDate);
+    expect(dashboard.appointmentsForDate).toContainEqual(expect.objectContaining({
+      id: appointmentId,
+      therapyId: therapy.id,
+      patientName: "Joana Paciente",
+      therapistName: "Ana Terapeuta",
+    }));
+
+    const patientDashboard = await fetch(
+      `${baseUrl}/api/v1/dashboard?date=${encodeURIComponent(clinicDate)}`,
+      { headers: { cookie: patientCookie } },
+    );
+    const patientData = await patientDashboard.json() as {
+      appointmentsForDate: Array<{ id: string }>;
+      lastEncounter: { id: string; attendedAt: string; therapyId: string; therapyName: string } | null;
+    };
+    expect(patientData.appointmentsForDate).toEqual([expect.objectContaining({ id: appointmentId })]);
+    expect(patientData.lastEncounter).toEqual(expect.objectContaining({
+      id: encounter.id,
+      therapyId: therapy.id,
+      therapyName: expect.any(String),
+    }));
+
+    const otherDate = new Date(`${clinicDate}T00:00:00.000Z`);
+    otherDate.setUTCDate(otherDate.getUTCDate() + 1);
+    const emptyDay = await fetch(
+      `${baseUrl}/api/v1/dashboard?date=${otherDate.toISOString().slice(0, 10)}`,
+      { headers: { cookie: adminCookie } },
+    );
+    const emptyDayData = await emptyDay.json() as { appointmentsForDate: unknown[] };
+    expect(emptyDayData.appointmentsForDate).toHaveLength(0);
+
+    const protocolsResponse = await fetch(
+      `${baseUrl}/api/v1/dashboard/therapies/${therapy.id}/protocols`,
+      { headers: { cookie: patientCookie } },
+    );
+    expect(protocolsResponse.status).toBe(200);
+    const protocolData = await protocolsResponse.json() as {
+      protocols: Array<{ id: string; name: string; steps: Array<{ description: string }> }>;
+    };
+    expect(protocolData.protocols).toContainEqual(expect.objectContaining({
+      id: protocol.id,
+      name: "Protocolo da agenda",
+      steps: [expect.objectContaining({ description: "Etapa de avaliação" })],
+    }));
+
+    const encounterProtocolsResponse = await fetch(
+      `${baseUrl}/api/v1/dashboard/encounters/${encounter.id}/protocols`,
+      { headers: { cookie: patientCookie } },
+    );
+    expect(encounterProtocolsResponse.status).toBe(200);
+    const encounterProtocolData = await encounterProtocolsResponse.json() as {
+      protocols: Array<{ id: string; name: string; steps: Array<{ description: string }> }>;
+    };
+    expect(encounterProtocolData.protocols).toContainEqual(expect.objectContaining({
+      id: protocol.id,
+      name: "Protocolo da agenda",
+      steps: [expect.objectContaining({ description: "Etapa de avaliação" })],
+    }));
+
+    const unownedEncounterResponse = await fetch(
+      `${baseUrl}/api/v1/dashboard/encounters/${crypto.randomUUID()}/protocols`,
+      { headers: { cookie: patientCookie } },
+    );
+    expect(unownedEncounterResponse.status).toBe(404);
+  });
+
   it("creates patient profiles with workbook identifiers", async () => {
     const cookie = await login("terapeuta@qiconect.local", "Terapeuta123!");
     const response = await fetch(`${baseUrl}/api/v1/patients`, {
@@ -421,6 +593,80 @@ describe("QIConect API MVP", () => {
       const response = await fetch(`${baseUrl}/api/v1/registrations/${resource}`, { headers: { cookie: adminCookie } });
       expect(response.status, resource).toBe(200);
     }
+
+    const deactivatePatient = await fetch(`${baseUrl}/api/v1/registrations/patient/${createdPatient.id}`, {
+      method: "PATCH",
+      headers: { cookie: adminCookie, "content-type": "application/json" },
+      body: JSON.stringify({ active: false }),
+    });
+    expect(deactivatePatient.status).toBe(200);
+    expect(db.prepare(
+      `SELECT p.ativo AS profileActive, u.ativo AS accountActive, m.status AS membershipStatus,
+              (SELECT COUNT(*) FROM DIAGNOSTICO WHERE patient_membership_id = p.membership_id) AS diagnosisCount
+       FROM PACIENTE p JOIN USUARIO u ON u.id = p.usuario_id
+       JOIN memberships m ON m.id = p.membership_id
+       WHERE p.membership_id = ?`,
+    ).get(createdPatient.id)).toEqual({
+      profileActive: 0,
+      accountActive: 0,
+      membershipStatus: "SUSPENDED",
+      diagnosisCount: 1,
+    });
+
+    const restorePatient = await fetch(`${baseUrl}/api/v1/registrations/patient/${createdPatient.id}`, {
+      method: "PATCH",
+      headers: { cookie: adminCookie, "content-type": "application/json" },
+      body: JSON.stringify({ active: true }),
+    });
+    expect(restorePatient.status).toBe(200);
+  });
+
+  it("archives clinics only when the administrator can restore them from another active clinic", async () => {
+    const adminCookie = await login("admin@qiconect.local", "Admin123!");
+    const clinicResponse = await fetch(`${baseUrl}/api/v1/registrations/clinic`, { headers: { cookie: adminCookie } });
+    const clinicPayload = await clinicResponse.json() as { records: Array<{ id: string }> };
+    const clinicId = clinicPayload.records[0].id;
+
+    const blockedArchive = await fetch(`${baseUrl}/api/v1/registrations/clinic/${clinicId}`, {
+      method: "PATCH",
+      headers: { cookie: adminCookie, "content-type": "application/json" },
+      body: JSON.stringify({ active: false }),
+    });
+    expect(blockedArchive.status).toBe(409);
+    expect(db.prepare("SELECT ativo AS active FROM CLINICA WHERE id = ?").get(clinicId)).toEqual({ active: 1 });
+
+    const createClinic = await fetch(`${baseUrl}/api/v1/registrations/clinic`, {
+      method: "POST",
+      headers: { cookie: adminCookie, "content-type": "application/json" },
+      body: JSON.stringify({ name: "Clínica de recuperação", timezone: "America/Sao_Paulo" }),
+    });
+    expect(createClinic.status).toBe(201);
+    const createdClinic = await createClinic.json() as { id: string };
+    expect(db.prepare(
+      "SELECT role, status FROM memberships WHERE clinic_id = ? AND user_id = (SELECT id FROM USUARIO WHERE email = ?)",
+    ).get(createdClinic.id, "admin@qiconect.local")).toEqual({ role: "CLINIC_ADMIN", status: "ACTIVE" });
+
+    const archive = await fetch(`${baseUrl}/api/v1/registrations/clinic/${clinicId}`, {
+      method: "PATCH",
+      headers: { cookie: adminCookie, "content-type": "application/json" },
+      body: JSON.stringify({ active: false }),
+    });
+    expect(archive.status).toBe(200);
+    expect(db.prepare("SELECT ativo AS active FROM CLINICA WHERE id = ?").get(clinicId)).toEqual({ active: 0 });
+
+    const recoveryCookie = await login("admin@qiconect.local", "Admin123!");
+    const archivedResponse = await fetch(`${baseUrl}/api/v1/registrations/archived-clinics`, {
+      headers: { cookie: recoveryCookie },
+    });
+    const archivedPayload = await archivedResponse.json() as { clinics: Array<{ id: string; name: string }> };
+    expect(archivedPayload.clinics).toContainEqual({ id: clinicId, name: "Clínica QIConect" });
+
+    const restore = await fetch(`${baseUrl}/api/v1/registrations/clinic/${clinicId}/restore`, {
+      method: "POST",
+      headers: { cookie: recoveryCookie },
+    });
+    expect(restore.status).toBe(200);
+    expect(db.prepare("SELECT ativo AS active FROM CLINICA WHERE id = ?").get(clinicId)).toEqual({ active: 1 });
   });
 
   it("does not expose patients across clinic boundaries", async () => {

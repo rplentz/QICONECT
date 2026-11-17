@@ -300,6 +300,40 @@ registrationRouter.get("/registrations/options", requireAuth, requireRole("CLINI
   response.json({ options });
 });
 
+registrationRouter.get("/registrations/archived-clinics", requireAuth, requireRole("CLINIC_ADMIN"), (request, response) => {
+  const auth = getAuth(request);
+  const clinics = db.prepare(
+    `SELECT c.id, c.nome AS name
+     FROM CLINICA c
+     JOIN memberships m ON m.clinic_id = c.id
+     WHERE m.user_id = ? AND m.role = 'CLINIC_ADMIN' AND m.status = 'ACTIVE' AND c.ativo = 0
+     ORDER BY c.nome`,
+  ).all(auth.userId);
+  response.json({ clinics });
+});
+
+registrationRouter.post("/registrations/clinic/:id/restore", requireAuth, requireRole("CLINIC_ADMIN"), (request, response, next) => {
+  try {
+    const id = recordId.parse(request.params.id);
+    const auth = getAuth(request);
+    const membership = db.prepare(
+      `SELECT c.id FROM CLINICA c
+       JOIN memberships m ON m.clinic_id = c.id
+       WHERE c.id = ? AND c.ativo = 0 AND m.user_id = ?
+         AND m.role = 'CLINIC_ADMIN' AND m.status = 'ACTIVE'`,
+    ).get(id, auth.userId);
+    if (!membership) throw new HttpError(404, "CLINIC_NOT_FOUND", "Clínica arquivada não encontrada ou sem acesso administrativo.");
+
+    const result = db.prepare("UPDATE CLINICA SET ativo = 1, dt_atualizacao = ? WHERE id = ? AND ativo = 0")
+      .run(new Date().toISOString(), id);
+    if (result.changes !== 1) throw new HttpError(409, "CLINIC_NOT_ARCHIVED", "A clínica não está arquivada.");
+    writeAudit({ ...auth, clinicId: id }, "clinic.restored", "clinic", id);
+    response.json({ id });
+  } catch (error) {
+    next(error);
+  }
+});
+
 registrationRouter.get("/registrations/protocol-steps", requireAuth, requireRole("CLINIC_ADMIN"), (request, response, next) => {
   try {
     const auth = getAuth(request);
@@ -367,7 +401,40 @@ registrationRouter.post("/registrations/:resource", requireAuth, requireRole("CL
 
     switch (resource) {
       case "clinic":
-        throw new HttpError(405, "CLINIC_ALREADY_EXISTS", "Edite os dados da clínica ativa; uma nova clínica exige criação de vínculo administrativo.");
+      {
+        const input = z.object({
+          name: z.string().trim().min(2).max(160),
+          cnpj: optionalText(18),
+          email: z.string().email().max(254).optional().or(z.literal("")),
+          phone: optionalText(30),
+          address: optionalText(500),
+          timezone: z.string().trim().min(1).max(80),
+        }).parse(request.body);
+        if (input.cnpj && db.prepare("SELECT id FROM CLINICA WHERE cnpj = ?").get(input.cnpj)) {
+          throw new HttpError(409, "CLINIC_CNPJ_EXISTS", "Já existe uma clínica cadastrada com este CNPJ.");
+        }
+        const id = randomUUID();
+        const membershipId = randomUUID();
+        const createdAt = new Date().toISOString();
+        const createClinic = db.transaction(() => {
+          db.prepare(
+            `INSERT INTO CLINICA
+             (id, slug, nome, cnpj, email, telefone, endereco, timezone, ativo, dt_registro, dt_atualizacao)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+          ).run(
+            id, `clinic-${id}`, input.name, input.cnpj ?? null, input.email || null, input.phone ?? null,
+            input.address ?? null, input.timezone, createdAt, createdAt,
+          );
+          db.prepare(
+            `INSERT INTO memberships (id, clinic_id, user_id, role, status, created_at)
+             VALUES (?, ?, ?, 'CLINIC_ADMIN', 'ACTIVE', ?)`,
+          ).run(membershipId, id, auth.userId, createdAt);
+        });
+        createClinic.immediate();
+        writeAudit({ ...auth, clinicId: id }, "clinic.created", "clinic", id);
+        response.status(201).json({ id });
+        return;
+      }
       case "user": {
         const input = z.object({
           fullName: z.string().trim().min(2).max(120),
@@ -679,23 +746,35 @@ registrationRouter.patch("/registrations/:resource/:id", requireAuth, requireRol
           phone: optionalText(30),
           address: optionalText(500),
           timezone: z.string().trim().min(1).max(80).optional(),
+          active: z.boolean().optional(),
         }).refine((value) => Object.keys(value).length > 0, "Informe ao menos um campo.").parse(request.body);
         const current = db.prepare(
-          "SELECT nome AS name, cnpj, email, telefone AS phone, endereco AS address, timezone FROM CLINICA WHERE id = ?",
-        ).get(id) as { name: string; cnpj: string | null; email: string | null; phone: string | null; address: string | null; timezone: string } | undefined;
+          "SELECT nome AS name, cnpj, email, telefone AS phone, endereco AS address, timezone, ativo AS active FROM CLINICA WHERE id = ?",
+        ).get(id) as { name: string; cnpj: string | null; email: string | null; phone: string | null; address: string | null; timezone: string; active: number } | undefined;
         if (!current) throw new HttpError(404, "CLINIC_NOT_FOUND", "Clínica não encontrada.");
+        if (input.active === false) {
+          const otherActiveClinic = db.prepare(
+            `SELECT 1 FROM memberships m
+             JOIN CLINICA c ON c.id = m.clinic_id
+             WHERE m.user_id = ? AND m.clinic_id != ? AND m.role = 'CLINIC_ADMIN'
+               AND m.status = 'ACTIVE' AND c.ativo = 1 LIMIT 1`,
+          ).get(auth.userId, id);
+          if (!otherActiveClinic) {
+            throw new HttpError(409, "LAST_ACTIVE_CLINIC", "Não é possível arquivar a única clínica ativa do seu usuário. Vincule-se a outra clínica ativa antes.");
+          }
+        }
         db.prepare(
           `UPDATE CLINICA SET nome = ?, cnpj = ?, email = ?, telefone = ?, endereco = ?,
-           timezone = ?, dt_atualizacao = ? WHERE id = ?`,
+           timezone = ?, ativo = COALESCE(?, ativo), dt_atualizacao = ? WHERE id = ?`,
         ).run(
           input.name ?? current.name,
           inputOrCurrent(request.body, "cnpj", input.cnpj, current.cnpj),
           inputOrCurrent(request.body, "email", input.email, current.email),
           inputOrCurrent(request.body, "phone", input.phone, current.phone),
           inputOrCurrent(request.body, "address", input.address, current.address),
-          input.timezone ?? current.timezone, now, id,
+          input.timezone ?? current.timezone, input.active === undefined ? null : Number(input.active), now, id,
         );
-        writeAudit(auth, "clinic.updated", "clinic", id);
+        writeAudit(auth, input.active === false ? "clinic.archived" : "clinic.updated", "clinic", id);
         response.json({ id });
         return;
       }

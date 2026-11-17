@@ -152,6 +152,19 @@ def target_id(source_name: str, sheet: str, row: dict[str, str]) -> str:
     return stable_id(source_name, sheet, value(row, "id"))
 
 
+def workbook_admin_row(sheets: dict[str, list[dict[str, str]]]) -> dict[str, str]:
+    patient_user_ids = {row.get("usuario_id", "").strip() for row in sheets.get("PACIENTE", [])}
+    therapist_user_ids = {row.get("usuario_id", "").strip() for row in sheets.get("TERAPEUTA", [])}
+    role_user_ids = patient_user_ids | therapist_user_ids
+    candidates = [
+        row for row in sheets.get("USUARIO", [])
+        if row.get("id", "").strip() not in role_user_ids
+    ]
+    if len(candidates) != 1:
+        raise RuntimeError("The workbook must identify exactly one clinic administrator by its profile relationships.")
+    return candidates[0]
+
+
 def insert(
     connection: sqlite3.Connection,
     table: str,
@@ -166,7 +179,7 @@ def insert(
     )
 
 
-def delete_existing_data(connection: sqlite3.Connection, admin_user_id: str) -> None:
+def delete_existing_data(connection: sqlite3.Connection, preserved_user_ids: set[str]) -> None:
     for table in (
         "workbook_import_rejections",
         "workbook_import_batches",
@@ -187,9 +200,9 @@ def delete_existing_data(connection: sqlite3.Connection, admin_user_id: str) -> 
         "PACOTE",
         "EVOLUCAO",
         "DIAGNOSTICO_PROTOCOLO",
-        "DIAGNOSTICO",
         "PROTOCOLO_ETAPA",
         "PROTOCOLO",
+        "DIAGNOSTICO",
         "ATENDIMENTO",
         "AGENDA",
         "PRONTUARIO",
@@ -207,7 +220,14 @@ def delete_existing_data(connection: sqlite3.Connection, admin_user_id: str) -> 
         "CLINICA",
     ):
         connection.execute(f"DELETE FROM {table}")
-    connection.execute("DELETE FROM USUARIO WHERE id != ?", (admin_user_id,))
+    if preserved_user_ids:
+        placeholders = ", ".join("?" for _ in preserved_user_ids)
+        connection.execute(
+            f"DELETE FROM USUARIO WHERE id NOT IN ({placeholders})",
+            tuple(preserved_user_ids),
+        )
+    else:
+        connection.execute("DELETE FROM USUARIO")
 
 
 def ensure_patient_contact_columns(connection: sqlite3.Connection) -> None:
@@ -290,6 +310,7 @@ def import_workbook(
     source_hash: str,
     sheets: dict[str, list[dict[str, str]]],
     admin_user_id: str,
+    existing_users_by_email: dict[str, sqlite3.Row],
 ) -> dict[str, Any]:
     now = utc_now()
     counts: dict[str, Counter[str]] = {
@@ -346,10 +367,8 @@ def import_workbook(
 
     user_ids: dict[str, str] = {}
     user_rows = sheets.get("USUARIO", [])
-    admin_email = connection.execute(
-        "SELECT email FROM USUARIO WHERE id = ?", (admin_user_id,)
-    ).fetchone()["email"].strip().casefold()
-    seen_emails = {admin_email}
+    user_ids_by_source: dict[str, dict[str, str]] = {}
+    seen_emails: set[str] = set()
     for row in user_rows:
         try:
             source_id = value(row, "id")
@@ -359,28 +378,32 @@ def import_workbook(
             if email in seen_emails:
                 raise ImportIssue("DUPLICATE_EMAIL", "email")
             seen_emails.add(email)
-            generated_id = target_id(source_name, "USUARIO", row)
-            password, password_hash = make_password()
-            insert(
-                connection,
-                "USUARIO",
-                ("id", "email", "password_hash", "nome", "telefone", "ativo",
-                 "dt_registro", "dt_ult_acesso", "dt_atualizacao"),
-                (
-                    generated_id,
-                    email,
-                    password_hash,
-                    full_name,
-                    phone,
-                    1,
-                    parse_date(row.get("dt_registro", ""), required=False) or now,
-                    None,
-                    now,
-                ),
-            )
+            active = parse_bool(row.get("ativo", "1"))
+            created_at = parse_date(row.get("dt_registro", ""), required=False) or now
+            existing = existing_users_by_email.get(email)
+            if existing:
+                generated_id = existing["id"]
+                connection.execute(
+                    """UPDATE USUARIO
+                       SET email = ?, nome = ?, telefone = ?, ativo = ?, dt_registro = ?, dt_atualizacao = ?
+                       WHERE id = ?""",
+                    (email, full_name, phone, active, created_at, now, generated_id),
+                )
+                counts["USUARIO"]["reused_existing"] += 1
+            else:
+                generated_id = target_id(source_name, "USUARIO", row)
+                password, password_hash = make_password()
+                insert(
+                    connection,
+                    "USUARIO",
+                    ("id", "email", "password_hash", "nome", "telefone", "ativo",
+                     "dt_registro", "dt_ult_acesso", "dt_atualizacao"),
+                    (generated_id, email, password_hash, full_name, phone, active, created_at, None, now),
+                )
+                credentials.append({"email": email, "password": password})
+                counts["USUARIO"]["imported_active" if active else "imported_inactive"] += 1
             user_ids[source_id] = generated_id
-            credentials.append({"email": email, "password": password})
-            counts["USUARIO"]["imported_active"] += 1
+            user_ids_by_source[source_id] = {"id": generated_id, "active": str(active)}
         except ImportIssue as issue:
             add_rejection(connection, batch_id, source_name, counts, "USUARIO", row, issue)
 
@@ -400,15 +423,18 @@ def import_workbook(
             if row.get("clinica_id", "").strip() != source_clinic_id:
                 raise ImportIssue("UNRESOLVED_REFERENCE", "clinica_id")
             user_id = reference(user_ids, row.get("usuario_id", ""), "usuario_id")
+            source_user = user_ids_by_source[row.get("usuario_id", "").strip()]
             membership_id = stable_id(source_name, "PACIENTE_MEMBERSHIP", source_id)
             if user_id in patient_by_user:
                 raise ImportIssue("DUPLICATE_ROLE_MEMBERSHIP", "usuario_id")
             patient_by_user.add(user_id)
+            active = parse_bool(row.get("ativo", "1"))
+            membership_status = "ACTIVE" if active and source_user["active"] == "1" else "SUSPENDED"
             insert(
                 connection,
                 "memberships",
                 ("id", "clinic_id", "user_id", "role", "status", "created_at", "profile_id"),
-                (membership_id, clinic_id, user_id, "PATIENT", "ACTIVE", now, profile_ids["PATIENT"]),
+                (membership_id, clinic_id, user_id, "PATIENT", membership_status, now, profile_ids["PATIENT"]),
             )
             patient_memberships[source_id] = membership_id
             cpf = "".join(ch for ch in row.get("cpf", "") if ch.isdigit())
@@ -423,14 +449,14 @@ def import_workbook(
                     target_id(source_name, "PACIENTE", row),
                     user_id,
                     clinic_id,
-                    phone,
+                    row.get("telefone", "").strip() or None,
                     membership_id,
                     clinic_id,
                     birth_date,
                     cpf or None,
                     row.get("endereco", "").strip() or None,
                     row.get("sexo", "").strip().upper() or None,
-                    1,
+                    active,
                     now,
                     None,
                     None,
@@ -448,15 +474,18 @@ def import_workbook(
             if row.get("clinica_id", "").strip() != source_clinic_id:
                 raise ImportIssue("UNRESOLVED_REFERENCE", "clinica_id")
             user_id = reference(user_ids, row.get("usuario_id", ""), "usuario_id")
+            source_user = user_ids_by_source[row.get("usuario_id", "").strip()]
             if user_id in patient_by_user or user_id in therapist_by_user:
                 raise ImportIssue("DUPLICATE_ROLE_MEMBERSHIP", "usuario_id")
             therapist_by_user.add(user_id)
+            active = parse_bool(row.get("ativo", "1"))
+            membership_status = "ACTIVE" if active and source_user["active"] == "1" else "SUSPENDED"
             membership_id = stable_id(source_name, "TERAPEUTA_MEMBERSHIP", source_id)
             insert(
                 connection,
                 "memberships",
                 ("id", "clinic_id", "user_id", "role", "status", "created_at", "profile_id"),
-                (membership_id, clinic_id, user_id, "THERAPIST", "ACTIVE", now, profile_ids["THERAPIST"]),
+                (membership_id, clinic_id, user_id, "THERAPIST", membership_status, now, profile_ids["THERAPIST"]),
             )
             therapist_memberships[source_id] = membership_id
             cpf = "".join(ch for ch in row.get("cpf", "") if ch.isdigit())
@@ -474,7 +503,7 @@ def import_workbook(
                     row.get("registro_prof", "").strip() or None,
                     cpf or None,
                     row.get("formacao", "").strip() or None,
-                    1,
+                    active,
                     now,
                 ),
             )
@@ -636,8 +665,8 @@ def import_workbook(
         insert(
             connection,
             "PRONTUARIO",
-            ("id", "clinic_id", "patient_membership_id", "data_abertura", "status", "created_at", "updated_at", "paciente_id"),
-            (chart_id, clinic_id, patient_membership, timestamp, "ACTIVE", now, now,
+            ("id", "clinic_id", "patient_membership_id", "data_abertura", "status", "paciente_id"),
+            (chart_id, clinic_id, patient_membership, timestamp, "ACTIVE",
              stable_id(source_name, "PACIENTE", patient_source_id)),
         )
         charts_by_patient[patient_source_id] = chart_id
@@ -658,8 +687,8 @@ def import_workbook(
             insert(
                 connection,
                 "PRONTUARIO",
-                ("id", "clinic_id", "patient_membership_id", "data_abertura", "status", "created_at", "updated_at", "paciente_id"),
-                (chart_id, clinic_id, patient_membership, opened_at, status, now, now,
+                ("id", "clinic_id", "patient_membership_id", "data_abertura", "status", "paciente_id"),
+                (chart_id, clinic_id, patient_membership, opened_at, status,
                  stable_id(source_name, "PACIENTE", patient_source_id)),
             )
             charts_by_patient[patient_source_id] = chart_id
@@ -685,11 +714,11 @@ def import_workbook(
                 connection,
                 "DIAGNOSTICO",
                 ("id", "clinic_id", "patient_chart_id", "patient_membership_id",
-                 "therapist_membership_id", "encounter_id", "descricao", "dt_diagnostico", "created_at",
+                 "therapist_membership_id", "encounter_id", "descricao", "dt_diagnostico",
                  "paciente_id", "terapeuta_id"),
                 (
                     diagnosis_id, clinic_id, chart_id, patient_membership,
-                    therapist_membership, None, value(row, "descricao"), diagnosed_at, now,
+                    therapist_membership, None, value(row, "descricao"), diagnosed_at,
                     stable_id(source_name, "PACIENTE", patient_source_id),
                     stable_id(source_name, "TERAPEUTA", row.get("terapeuta_id", "").strip()),
                 ),
@@ -735,8 +764,8 @@ def import_workbook(
             insert(
                 connection,
                 "DIAGNOSTICO_PROTOCOLO",
-                ("id", "clinic_id", "diagnostico_id", "protocolo_etapa_id", "dt_diagnostico", "status", "created_at"),
-                (target, clinic_id, diagnosis_id, step_id, started_at, status, now),
+                ("id", "clinic_id", "diagnostico_id", "protocolo_etapa_id", "dt_diagnostico", "status"),
+                (target, clinic_id, diagnosis_id, step_id, started_at, status),
             )
             diagnosis_protocol_ids[source_id] = target
             counts["DIAGNOSTICO_PROTOCOLO"]["imported"] += 1
@@ -1207,21 +1236,33 @@ def run_replace(
                     previous["mode"] = "already replaced; no database writes"
                     return {"summary": previous, "credentials": []}
 
-            admins = connection.execute(
-                """
-                SELECT DISTINCT u.id
-                FROM USUARIO u JOIN memberships m ON m.user_id = u.id
-                WHERE m.role = 'CLINIC_ADMIN' AND u.ativo = 1
-                """
-            ).fetchall()
-            if len(admins) != 1:
-                raise RuntimeError("Exactly one active clinic administrator must be preserved.")
-            admin_user_id = admins[0]["id"]
+            admin_row = workbook_admin_row(sheets)
+            admin_email = value(admin_row, "email").casefold()
+            workbook_emails = [value(row, "email").casefold() for row in sheets.get("USUARIO", [])]
+            if len(workbook_emails) != len(set(workbook_emails)):
+                raise RuntimeError("The workbook contains duplicate user emails; replacement cancelled.")
+            existing_users_by_email: dict[str, sqlite3.Row] = {}
+            for email in workbook_emails:
+                existing_user = connection.execute(
+                    "SELECT id, email, password_hash FROM USUARIO WHERE lower(email) = ?",
+                    (email,),
+                ).fetchone()
+                if existing_user:
+                    existing_users_by_email[email] = existing_user
+            admin_user = existing_users_by_email.get(admin_email)
+            if not admin_user:
+                raise RuntimeError("The workbook administrator must match an existing account so its password can be preserved.")
+            if parse_bool(admin_row.get("ativo", "1")) != 1:
+                raise RuntimeError("The workbook administrator is inactive; replacement cancelled.")
+            admin_user_id = admin_user["id"]
+            preserved_user_ids = {
+                user["id"] for user in existing_users_by_email.values()
+            }
 
             connection.execute("BEGIN IMMEDIATE")
             batch_id = str(uuid.uuid4())
             ensure_patient_contact_columns(connection)
-            delete_existing_data(connection, admin_user_id)
+            delete_existing_data(connection, preserved_user_ids)
             insert(
                 connection,
                 "workbook_import_batches",
@@ -1230,7 +1271,13 @@ def run_replace(
                 (batch_id, source_name, source_hash, None, utc_now(), 0, 0, 0, "{}"),
             )
             result = import_workbook(
-                connection, batch_id, source_name, source_hash, sheets, admin_user_id
+                connection,
+                batch_id,
+                source_name,
+                source_hash,
+                sheets,
+                admin_user_id,
+                existing_users_by_email,
             )
             clinic_id = result["clinic_id"]
             summary = result["summary"]

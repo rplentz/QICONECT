@@ -6,6 +6,8 @@
 - Pacientes e terapeutas podem ter contas com vínculos distintos por clínica.
 - Apenas vínculos ativos podem entrar no contexto da clínica.
 - O administrador da clínica administra cadastros e agenda, mas não lê prontuários clínicos sem perfil de terapeuta.
+- Cadastros administrativos podem ser arquivados logicamente e restaurados; o histórico e os vínculos permanecem no banco.
+- Uma clínica só pode ser arquivada se o administrador tiver acesso a outra clínica ativa, e clínicas arquivadas podem ser restauradas por um administrador vinculado.
 - O paciente só lista o próprio cadastro e registros liberados.
 
 ## Agendamento
@@ -39,6 +41,6 @@
 - Consentimentos digitais e solicitações de exclusão.
 - Recuperação de senha e alteração de senha.
 - Edição de cadastro do paciente.
-- Gestão de instâncias/clínicas pela plataforma.
+- Gestão de instâncias clínicas em nível de plataforma.
 - Entrega real de notificações por e-mail/WhatsApp.
 - Integrações Bio-Well/IA, cobrança e exportação de relatórios.
