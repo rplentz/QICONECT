@@ -17,3 +17,5 @@ data/
 
 # Prisma generated artifacts
 apps/api/src/generated/prisma/
+.prisma-composer/
+.alchemy/
