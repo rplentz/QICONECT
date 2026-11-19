@@ -161,12 +161,14 @@ describe("QIConect API MVP", () => {
         "audit_events",
       ]),
     );
-    expect(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 5 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 6 });
     expect(db.pragma("foreign_key_check")).toEqual([]);
     const userColumns = db.prepare("PRAGMA table_info(USUARIO)").all() as Array<{ name: string }>;
     const answerColumns = db.prepare("PRAGMA table_info(ANAMNESE_PERGUNTAS)").all() as Array<{ name: string }>;
+    const protocolStepColumns = db.prepare("PRAGMA table_info(PROTOCOLO_ETAPA)").all() as Array<{ name: string }>;
     expect(userColumns.map((column) => column.name)).toEqual(expect.arrayContaining(["nome", "telefone", "ativo"]));
     expect(answerColumns.map((column) => column.name)).toContain("Resposta");
+    expect(protocolStepColumns.map((column) => column.name)).toContain("terapia_id");
     expect(
       db
         .prepare(

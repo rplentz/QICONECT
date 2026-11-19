@@ -1,0 +1,11 @@
+{
+    "python.terminal.useEnvFile": true,
+    "sqltools.connections": [
+        {
+            "name": "QIConect - SQLite",
+            "driver": "SQLite",
+            "database": "${workspaceFolder}\\data\\qiconect.sqlite",
+            "previewLimit": 50
+        }
+    ]
+}

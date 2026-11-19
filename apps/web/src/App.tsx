@@ -33,7 +33,7 @@ const registrations: Array<{
 const navigation: Array<{ id: Page; label: string; icon: string; roles?: Session["activeClinic"]["role"][] }> = [
   { id: "dashboard", label: "Visão geral", icon: "⌂" },
   { id: "appointments", label: "Agenda", icon: "◷", roles: ["THERAPIST", "PATIENT"] },
-  { id: "patients", label: "Pacientes", icon: "♡", roles: ["THERAPIST", "PATIENT"] },
+  { id: "patients", label: "Pacientes", icon: "♡", roles: ["THERAPIST"] },
   { id: "records", label: "Prontuário", icon: "▤", roles: ["THERAPIST", "PATIENT"] },
   { id: "settings", label: "Configurações", icon: "⚙", roles: ["CLINIC_ADMIN", "THERAPIST"] },
 ];

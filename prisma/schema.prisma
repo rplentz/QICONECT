@@ -1,0 +1,759 @@
+// Prisma representation of the current SQLite schema (migrations 0001-0005).
+// The application still uses its SQL migrations; this file does not run or alter them.
+// Review CHECK constraints and triggers in the SQL migrations before using Prisma Migrate.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:../data/qiconect.sqlite"
+}
+
+model Agenda {
+  id String @id
+  clinicId String @map("clinic_id")
+  patientMembershipId String @map("patient_membership_id")
+  therapistMembershipId String @map("therapist_membership_id")
+  terapiaId String @map("terapia_id")
+  dtInicio String @map("dt_inicio")
+  dtFim String @map("dt_fim")
+  status String @default("CONFIRMED")
+  cancellationReason String? @map("cancellation_reason")
+  createdAt String @map("created_at")
+  updatedAt String @map("updated_at")
+  patientChartId String? @map("patient_chart_id")
+  cancelledAt String? @map("cancelled_at")
+  cancelledByUserId String? @map("cancelled_by_user_id")
+  cancellationChannel String? @map("cancellation_channel")
+  pacienteId String? @map("paciente_id")
+  terapeutaId String? @map("terapeuta_id")
+  terapia Terapia @relation("Agenda_terapiaId_clinicId", fields: [terapiaId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  therapistMembership Membership @relation("Agenda_therapistMembershipId_clinicId", fields: [therapistMembershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  patientMembership Membership @relation("Agenda_patientMembershipId_clinicId", fields: [patientMembershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  terapeuta Terapeuta? @relation("Agenda_terapeutaId", fields: [terapeutaId], references: [id], onDelete: NoAction)
+  paciente Paciente? @relation("Agenda_pacienteId", fields: [pacienteId], references: [id], onDelete: NoAction)
+  cancelledByUser Usuario? @relation("Agenda_cancelledByUserId", fields: [cancelledByUserId], references: [id], onDelete: SetNull)
+  clinic Clinica @relation("Agenda_clinicId", fields: [clinicId], references: [id], onDelete: Restrict)
+  atendimentoByAgenda Atendimento[] @relation("Atendimento_agendaId_clinicId")
+  pagamentoByAgenda Pagamento[] @relation("Pagamento_agendaId_clinicId")
+  appointmentEventByAppointment AppointmentEvent[] @relation("AppointmentEvent_appointmentId")
+  @@unique([id, clinicId], map: "appointments_id_clinic_unique_idx")
+  @@index([patientMembershipId, dtInicio, status], map: "appointments_patient_start_idx")
+  @@index([therapistMembershipId, dtInicio, status], map: "appointments_therapist_start_idx")
+  @@index([clinicId, dtInicio, status], map: "appointments_clinic_start_idx")
+  @@map("AGENDA")
+}
+
+model AnaliseLingua {
+  id String @id
+  clinicId String @map("clinic_id")
+  patientChartId String @map("patient_chart_id")
+  patientMembershipId String @map("patient_membership_id")
+  atendimentoId String? @map("atendimento_id")
+  imagem String
+  resultadoIa String? @map("resultado_ia")
+  parecerTerapeuta String? @map("parecer_terapeuta")
+  analyzedByMembershipId String? @map("analyzed_by_membership_id")
+  analyzedAt String? @map("analyzed_at")
+  createdAt String @default(dbgenerated("CURRENT_TIMESTAMP")) @map("created_at")
+  pacienteId String? @map("paciente_id")
+  analyzedByMembership Membership? @relation("AnaliseLingua_analyzedByMembershipId_clinicId", fields: [analyzedByMembershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  atendimento Atendimento? @relation("AnaliseLingua_atendimentoId_clinicId", fields: [atendimentoId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  patientMembership Membership @relation("AnaliseLingua_patientMembershipId_clinicId", fields: [patientMembershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  patientChart Prontuario @relation("AnaliseLingua_patientChartId_clinicId", fields: [patientChartId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  paciente Paciente? @relation("AnaliseLingua_pacienteId", fields: [pacienteId], references: [id], onDelete: NoAction)
+  @@index([clinicId, patientMembershipId, createdAt], map: "tongue_analyses_patient_date_idx")
+  @@map("ANALISE_LINGUA")
+}
+
+model Anamnese {
+  id String @id
+  clinicId String @map("clinic_id")
+  atendimentoId String @map("atendimento_id")
+  tipo String
+  descricao String?
+  dtRegistro String @map("dt_registro")
+  createdByMembershipId String @map("created_by_membership_id")
+  createdAt String @default(dbgenerated("CURRENT_TIMESTAMP")) @map("created_at")
+  createdByMembership Membership @relation("Anamnese_createdByMembershipId_clinicId", fields: [createdByMembershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  atendimento Atendimento @relation("Anamnese_atendimentoId_clinicId", fields: [atendimentoId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  anamnesePerguntaByAnamnese AnamnesePergunta[] @relation("AnamnesePergunta_anamneseId_clinicId")
+  anamnesisAssignmentByAnamnesis AnamnesisAssignment[] @relation("AnamnesisAssignment_anamnesisId_clinicId")
+  @@unique([id, clinicId])
+  @@index([clinicId, atendimentoId, tipo], map: "anamneses_encounter_type_idx")
+  @@map("ANAMNESE")
+}
+
+model AnamnesePergunta {
+  id String @id
+  clinicId String @map("clinic_id")
+  anamneseId String @map("anamnese_id")
+  perguntaId String @map("pergunta_id")
+  resposta String @map("Resposta")
+  createdAt String @default(dbgenerated("CURRENT_TIMESTAMP")) @map("created_at")
+  pergunta Pergunta @relation("AnamnesePergunta_perguntaId_clinicId", fields: [perguntaId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  anamnese Anamnese @relation("AnamnesePergunta_anamneseId_clinicId", fields: [anamneseId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  @@unique([anamneseId, perguntaId])
+  @@index([clinicId, anamneseId], map: "anamnesis_answers_clinic_idx")
+  @@map("ANAMNESE_PERGUNTAS")
+}
+
+model Anexo {
+  id String @id
+  clinicId String @map("clinic_id")
+  prontuarioId String @map("prontuario_id")
+  atendimentoId String? @map("atendimento_id")
+  uploadedByMembershipId String @map("uploaded_by_membership_id")
+  tipo String
+  storageKey String @unique @map("storage_key")
+  originalFilename String @map("original_filename")
+  contentType String @map("content_type")
+  sizeBytes Int @map("size_bytes")
+  descricao String?
+  dtUpload String @map("dt_upload")
+  createdAt String @default(dbgenerated("CURRENT_TIMESTAMP")) @map("created_at")
+  arquivo String?
+  uploadedByMembership Membership @relation("Anexo_uploadedByMembershipId_clinicId", fields: [uploadedByMembershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  atendimento Atendimento? @relation("Anexo_atendimentoId_clinicId", fields: [atendimentoId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  prontuario Prontuario @relation("Anexo_prontuarioId_clinicId", fields: [prontuarioId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  @@index([clinicId, prontuarioId, dtUpload], map: "attachments_chart_date_idx")
+  @@map("ANEXO")
+}
+
+model Atendimento {
+  id String @id
+  clinicId String @map("clinic_id")
+  prontuarioId String @map("prontuario_id")
+  patientMembershipId String @map("patient_membership_id")
+  therapistMembershipId String @map("therapist_membership_id")
+  terapiaId String @map("terapia_id")
+  agendaId String? @map("agenda_id")
+  dtAtend String @map("dt_atend")
+  status String @default("ACTIVE")
+  notes String?
+  createdAt String @default(dbgenerated("CURRENT_TIMESTAMP")) @map("created_at")
+  updatedAt String @default(dbgenerated("CURRENT_TIMESTAMP")) @map("updated_at")
+  pacienteId String? @map("paciente_id")
+  terapeutaId String? @map("terapeuta_id")
+  agenda Agenda? @relation("Atendimento_agendaId_clinicId", fields: [agendaId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  terapia Terapia @relation("Atendimento_terapiaId_clinicId", fields: [terapiaId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  therapistMembership Membership @relation("Atendimento_therapistMembershipId_clinicId", fields: [therapistMembershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  patientMembership Membership @relation("Atendimento_patientMembershipId_clinicId", fields: [patientMembershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  prontuario Prontuario @relation("Atendimento_prontuarioId_clinicId", fields: [prontuarioId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  terapeuta Terapeuta? @relation("Atendimento_terapeutaId", fields: [terapeutaId], references: [id], onDelete: NoAction)
+  paciente Paciente? @relation("Atendimento_pacienteId", fields: [pacienteId], references: [id], onDelete: NoAction)
+  analiseLinguaByAtendimento AnaliseLingua[] @relation("AnaliseLingua_atendimentoId_clinicId")
+  anamneseByAtendimento Anamnese[] @relation("Anamnese_atendimentoId_clinicId")
+  anexoByAtendimento Anexo[] @relation("Anexo_atendimentoId_clinicId")
+  biowellAvaliacaoByAtendimento BiowellAvaliacao[] @relation("BiowellAvaliacao_atendimentoId_clinicId")
+  diagnosticoByEncounter Diagnostico[] @relation("Diagnostico_encounterId_clinicId")
+  relatorioByAtendimento Relatorio[] @relation("Relatorio_atendimentoId_clinicId")
+  @@unique([id, clinicId])
+  @@index([clinicId, therapistMembershipId, dtAtend], map: "encounters_therapist_date_idx")
+  @@index([clinicId, patientMembershipId, dtAtend], map: "encounters_patient_date_idx")
+  @@map("ATENDIMENTO")
+}
+
+model Auditoria {
+  id String @id
+  clinicId String? @map("clinic_id")
+  usuarioId String? @map("usuario_id")
+  acao String
+  entidade String
+  registroId String? @map("registro_id")
+  metadata String?
+  dtHora String @map("dt_hora")
+  ip String?
+  usuario Usuario? @relation("Auditoria_usuarioId", fields: [usuarioId], references: [id], onDelete: SetNull)
+  clinic Clinica? @relation("Auditoria_clinicId", fields: [clinicId], references: [id], onDelete: Restrict)
+  @@index([clinicId, entidade, registroId, dtHora], map: "audit_events_entity_idx")
+  @@index([clinicId, dtHora], map: "audit_events_clinic_idx")
+  @@map("AUDITORIA")
+}
+
+model BiowellAvaliacao {
+  id String @id
+  clinicId String @map("clinic_id")
+  patientChartId String @map("patient_chart_id")
+  patientMembershipId String @map("patient_membership_id")
+  atendimentoId String? @map("atendimento_id")
+  assessedByMembershipId String @map("assessed_by_membership_id")
+  dtAvaliacao String @map("dt_avaliacao")
+  indiceEnergetico Float? @map("indice_energetico")
+  indiceEstresse Float? @map("indice_estresse")
+  sourceReference String? @map("source_reference")
+  notes String?
+  createdAt String @default(dbgenerated("CURRENT_TIMESTAMP")) @map("created_at")
+  pacienteId String? @map("paciente_id")
+  atendimento Atendimento? @relation("BiowellAvaliacao_atendimentoId_clinicId", fields: [atendimentoId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  assessedByMembership Membership @relation("BiowellAvaliacao_assessedByMembershipId_clinicId", fields: [assessedByMembershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  patientMembership Membership @relation("BiowellAvaliacao_patientMembershipId_clinicId", fields: [patientMembershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  patientChart Prontuario @relation("BiowellAvaliacao_patientChartId_clinicId", fields: [patientChartId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  paciente Paciente? @relation("BiowellAvaliacao_pacienteId", fields: [pacienteId], references: [id], onDelete: NoAction)
+  biowellChakraByAvaliacao BiowellChakra[] @relation("BiowellChakra_avaliacaoId_clinicId")
+  @@unique([id, clinicId])
+  @@index([clinicId, patientMembershipId, dtAvaliacao], map: "biowell_patient_date_idx")
+  @@map("BIOWELL_AVALIACAO")
+}
+
+model BiowellChakra {
+  id String @id
+  clinicId String @map("clinic_id")
+  avaliacaoId String @map("avaliacao_id")
+  chakra String
+  valor Float?
+  equilibrio String?
+  createdAt String @default(dbgenerated("CURRENT_TIMESTAMP")) @map("created_at")
+  avaliacao BiowellAvaliacao @relation("BiowellChakra_avaliacaoId_clinicId", fields: [avaliacaoId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  @@unique([avaliacaoId, chakra])
+  @@map("BIOWELL_CHAKRA")
+}
+
+model Clinica {
+  id String @id
+  slug String @unique
+  nome String
+  timezone String @default("America/Sao_Paulo")
+  dtRegistro String @map("dt_registro")
+  cnpj String? @unique(map: "clinics_cnpj_unique_idx")
+  email String?
+  telefone String?
+  endereco String?
+  ativo Int @default(1)
+  dtAtualizacao String? @map("dt_atualizacao")
+  agendaByClinic Agenda[] @relation("Agenda_clinicId")
+  auditoriaByClinic Auditoria[] @relation("Auditoria_clinicId")
+  especialidadeByClinic Especialidade[] @relation("Especialidade_clinicId")
+  pacienteByClinica Paciente[] @relation("Paciente_clinicaId")
+  terapeutaByClinica Terapeuta[] @relation("Terapeuta_clinicaId")
+  terapiaByClinic Terapia[] @relation("Terapia_clinicId")
+  clinicalRecordByClinic ClinicalRecord[] @relation("ClinicalRecord_clinicId")
+  membershipByClinic Membership[] @relation("Membership_clinicId")
+  notificationByClinic Notification[] @relation("Notification_clinicId")
+  sessionByClinic Session[] @relation("Session_clinicId")
+  workbookImportBatchByClinic WorkbookImportBatch[] @relation("WorkbookImportBatch_clinicId")
+  @@map("CLINICA")
+}
+
+model Diagnostico {
+  id String @id
+  clinicId String @map("clinic_id")
+  patientChartId String @map("patient_chart_id")
+  patientMembershipId String @map("patient_membership_id")
+  therapistMembershipId String @map("therapist_membership_id")
+  encounterId String? @map("encounter_id")
+  descricao String
+  dtDiagnostico String @map("dt_diagnostico")
+  pacienteId String? @map("paciente_id")
+  terapeutaId String? @map("terapeuta_id")
+  encounter Atendimento? @relation("Diagnostico_encounterId_clinicId", fields: [encounterId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  therapistMembership Membership @relation("Diagnostico_therapistMembershipId_clinicId", fields: [therapistMembershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  patientMembership Membership @relation("Diagnostico_patientMembershipId_clinicId", fields: [patientMembershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  patientChart Prontuario @relation("Diagnostico_patientChartId_clinicId", fields: [patientChartId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  terapeuta Terapeuta? @relation("Diagnostico_terapeutaId", fields: [terapeutaId], references: [id], onDelete: NoAction)
+  paciente Paciente? @relation("Diagnostico_pacienteId", fields: [pacienteId], references: [id], onDelete: NoAction)
+  diagnosticoProtocoloByDiagnostico DiagnosticoProtocolo[] @relation("DiagnosticoProtocolo_diagnosticoId_clinicId")
+  protocoloByDiagnostico Protocolo[] @relation("Protocolo_diagnosticoId")
+  @@unique([id, clinicId])
+  @@index([clinicId, patientMembershipId, dtDiagnostico], map: "diagnoses_patient_date_idx")
+  @@map("DIAGNOSTICO")
+}
+
+model DiagnosticoProtocolo {
+  id String @id
+  clinicId String @map("clinic_id")
+  diagnosticoId String @map("diagnostico_id")
+  protocoloEtapaId String @map("protocolo_etapa_id")
+  dtDiagnostico String @map("dt_diagnostico")
+  status String @default("IN_PROGRESS")
+  protocoloEtapa ProtocoloEtapa @relation("DiagnosticoProtocolo_protocoloEtapaId_clinicId", fields: [protocoloEtapaId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  diagnostico Diagnostico @relation("DiagnosticoProtocolo_diagnosticoId_clinicId", fields: [diagnosticoId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  evolucaoByDiagnosticoProtocolo Evolucao[] @relation("Evolucao_diagnosticoProtocoloId_clinicId")
+  @@unique([id, clinicId])
+  @@index([clinicId, diagnosticoId, status], map: "diagnosis_protocols_diagnosis_idx")
+  @@map("DIAGNOSTICO_PROTOCOLO")
+}
+
+model Especialidade {
+  id String @id
+  clinicId String @map("clinic_id")
+  nome String
+  descricao String?
+  ativo Int @default(1)
+  clinic Clinica @relation("Especialidade_clinicId", fields: [clinicId], references: [id], onDelete: Restrict)
+  perguntaBySpecialty Pergunta[] @relation("Pergunta_specialtyId_clinicId")
+  terapeutaEspecialidadeByEspecialidade TerapeutaEspecialidade[] @relation("TerapeutaEspecialidade_especialidadeId_clinicId")
+  terapiaByEspecialidade Terapia[] @relation("Terapia_especialidadeId_clinicId")
+  @@unique([id, clinicId])
+  @@unique([clinicId, nome])
+  @@map("ESPECIALIDADE")
+}
+
+model Evolucao {
+  id String @id
+  clinicId String @map("clinic_id")
+  diagnosticoProtocoloId String @map("diagnostico_protocolo_id")
+  authorMembershipId String @map("author_membership_id")
+  descricao String
+  dtEvolucao String @map("dt_evolucao")
+  status String @default("IN_PROGRESS")
+  createdAt String @default(dbgenerated("CURRENT_TIMESTAMP")) @map("created_at")
+  authorMembership Membership @relation("Evolucao_authorMembershipId_clinicId", fields: [authorMembershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  diagnosticoProtocolo DiagnosticoProtocolo @relation("Evolucao_diagnosticoProtocoloId_clinicId", fields: [diagnosticoProtocoloId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  @@index([clinicId, diagnosticoProtocoloId, dtEvolucao], map: "evolutions_protocol_date_idx")
+  @@map("EVOLUCAO")
+}
+
+model Paciente {
+  membershipId String @id @map("membership_id")
+  clinicId String @map("clinic_id")
+  dtNasc String? @map("dt_nasc")
+  cpf String?
+  endereco String?
+  sexo String?
+  ativo Int @default(1)
+  dtAtualizacao String? @map("dt_atualizacao")
+  id String? @unique(map: "paciente_workbook_id_idx")
+  usuarioId String? @map("usuario_id")
+  clinicaId String? @map("clinica_id")
+  telefone String?
+  emergencyContactName String? @map("emergency_contact_name")
+  emergencyContactPhone String? @map("emergency_contact_phone")
+  membership Membership @relation("Paciente_membershipId_clinicId", fields: [membershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  clinica Clinica? @relation("Paciente_clinicaId", fields: [clinicaId], references: [id], onDelete: NoAction)
+  usuario Usuario? @relation("Paciente_usuarioId", fields: [usuarioId], references: [id], onDelete: NoAction)
+  agendaByPaciente Agenda[] @relation("Agenda_pacienteId")
+  analiseLinguaByPaciente AnaliseLingua[] @relation("AnaliseLingua_pacienteId")
+  atendimentoByPaciente Atendimento[] @relation("Atendimento_pacienteId")
+  biowellAvaliacaoByPaciente BiowellAvaliacao[] @relation("BiowellAvaliacao_pacienteId")
+  diagnosticoByPaciente Diagnostico[] @relation("Diagnostico_pacienteId")
+  pacoteByPaciente Pacote[] @relation("Pacote_pacienteId")
+  pagamentoByPaciente Pagamento[] @relation("Pagamento_pacienteId")
+  prontuarioByPaciente Prontuario[] @relation("Prontuario_pacienteId")
+  relatorioByPaciente Relatorio[] @relation("Relatorio_pacienteId")
+  @@unique([clinicId, cpf], map: "patient_profiles_cpf_per_clinic_idx")
+  @@map("PACIENTE")
+}
+
+model Pacote {
+  id String @id
+  clinicId String @map("clinic_id")
+  patientMembershipId String @map("patient_membership_id")
+  nome String
+  quantidadeSessoes Int @map("quantidade_sessoes")
+  valor Float
+  validade String?
+  status String @default("ACTIVE")
+  createdAt String @default(dbgenerated("CURRENT_TIMESTAMP")) @map("created_at")
+  updatedAt String @default(dbgenerated("CURRENT_TIMESTAMP")) @map("updated_at")
+  pacienteId String? @map("paciente_id")
+  patientMembership Membership @relation("Pacote_patientMembershipId_clinicId", fields: [patientMembershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  paciente Paciente? @relation("Pacote_pacienteId", fields: [pacienteId], references: [id], onDelete: NoAction)
+  pagamentoByPackage Pagamento[] @relation("Pagamento_packageId_clinicId")
+  @@unique([id, clinicId])
+  @@index([clinicId, patientMembershipId, status], map: "therapeutic_packages_patient_idx")
+  @@map("PACOTE")
+}
+
+model Pagamento {
+  id String @id
+  clinicId String @map("clinic_id")
+  patientMembershipId String @map("patient_membership_id")
+  agendaId String? @map("agenda_id")
+  packageId String? @map("package_id")
+  valor Float
+  formaPagamento String @map("forma_pagamento")
+  status String
+  paidAt String? @map("paid_at")
+  createdAt String @default(dbgenerated("CURRENT_TIMESTAMP")) @map("created_at")
+  updatedAt String @default(dbgenerated("CURRENT_TIMESTAMP")) @map("updated_at")
+  pacienteId String? @map("paciente_id")
+  package Pacote? @relation("Pagamento_packageId_clinicId", fields: [packageId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  agenda Agenda? @relation("Pagamento_agendaId_clinicId", fields: [agendaId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  patientMembership Membership @relation("Pagamento_patientMembershipId_clinicId", fields: [patientMembershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  paciente Paciente? @relation("Pagamento_pacienteId", fields: [pacienteId], references: [id], onDelete: NoAction)
+  @@index([clinicId, patientMembershipId, createdAt], map: "payments_patient_date_idx")
+  @@map("PAGAMENTO")
+}
+
+model Perfil {
+  id String @id
+  code String @unique
+  nome String @unique
+  membershipByProfile Membership[] @relation("Membership_profileId")
+  @@map("PERFIL")
+}
+
+model Pergunta {
+  id String @id
+  clinicId String @map("clinic_id")
+  specialtyId String? @map("specialty_id")
+  descricao String
+  ativo Int @default(1)
+  displayOrder Int @default(0) @map("display_order")
+  createdAt String @default(dbgenerated("CURRENT_TIMESTAMP")) @map("created_at")
+  specialty Especialidade? @relation("Pergunta_specialtyId_clinicId", fields: [specialtyId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  anamnesePerguntaByPergunta AnamnesePergunta[] @relation("AnamnesePergunta_perguntaId_clinicId")
+  anamnesisAssignmentByQuestion AnamnesisAssignment[] @relation("AnamnesisAssignment_questionId_clinicId")
+  anamnesisQuestionOptionByQuestion AnamnesisQuestionOption[] @relation("AnamnesisQuestionOption_questionId_clinicId")
+  @@unique([id, clinicId])
+  @@index([clinicId, ativo, displayOrder], map: "anamnesis_questions_clinic_active_idx")
+  @@map("PERGUNTAS")
+}
+
+model Prontuario {
+  id String @id
+  clinicId String @map("clinic_id")
+  patientMembershipId String @map("patient_membership_id")
+  dataAbertura String @map("data_abertura")
+  status String @default("ACTIVE")
+  pacienteId String? @map("paciente_id")
+  patientMembership Membership @relation("Prontuario_patientMembershipId_clinicId", fields: [patientMembershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  paciente Paciente? @relation("Prontuario_pacienteId", fields: [pacienteId], references: [id], onDelete: NoAction)
+  analiseLinguaByPatientChart AnaliseLingua[] @relation("AnaliseLingua_patientChartId_clinicId")
+  anexoByProntuario Anexo[] @relation("Anexo_prontuarioId_clinicId")
+  atendimentoByProntuario Atendimento[] @relation("Atendimento_prontuarioId_clinicId")
+  biowellAvaliacaoByPatientChart BiowellAvaliacao[] @relation("BiowellAvaliacao_patientChartId_clinicId")
+  diagnosticoByPatientChart Diagnostico[] @relation("Diagnostico_patientChartId_clinicId")
+  relatorioByPatientChart Relatorio[] @relation("Relatorio_patientChartId_clinicId")
+  @@unique([id, clinicId])
+  @@unique([clinicId, patientMembershipId])
+  // Mirrors the same uniqueness with relation-field order required by Prisma for the 1:1 relation.
+  @@unique([patientMembershipId, clinicId])
+  @@index([clinicId, status], map: "patient_charts_clinic_status_idx")
+  @@map("PRONTUARIO")
+}
+
+model Protocolo {
+  id String @id
+  clinicId String @map("clinic_id")
+  terapiaId String @map("terapia_id")
+  therapistMembershipId String? @map("therapist_membership_id")
+  nome String
+  descricao String?
+  objetivo String?
+  ativo Int @default(1)
+  createdAt String @default(dbgenerated("CURRENT_TIMESTAMP")) @map("created_at")
+  updatedAt String @default(dbgenerated("CURRENT_TIMESTAMP")) @map("updated_at")
+  terapeutaId String? @map("terapeuta_id")
+  diagnosticoId String? @map("diagnostico_id")
+  therapistMembership Membership? @relation("Protocolo_therapistMembershipId_clinicId", fields: [therapistMembershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  terapia Terapia @relation("Protocolo_terapiaId_clinicId", fields: [terapiaId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  diagnostico Diagnostico? @relation("Protocolo_diagnosticoId", fields: [diagnosticoId], references: [id], onDelete: NoAction)
+  terapeuta Terapeuta? @relation("Protocolo_terapeutaId", fields: [terapeutaId], references: [id], onDelete: NoAction)
+  protocoloEtapaByProtocolo ProtocoloEtapa[] @relation("ProtocoloEtapa_protocoloId_clinicId")
+  @@unique([id, clinicId])
+  @@index([clinicId, ativo, nome], map: "protocols_clinic_active_idx")
+  @@map("PROTOCOLO")
+}
+
+model ProtocoloEtapa {
+  id String @id
+  clinicId String @map("clinic_id")
+  protocoloId String @map("protocolo_id")
+  sequencia Int
+  dtInicio String? @map("dt_inicio")
+  dtFim String? @map("dt_fim")
+  descricao String
+  obs String?
+  createdAt String @default(dbgenerated("CURRENT_TIMESTAMP")) @map("created_at")
+  protocolo Protocolo @relation("ProtocoloEtapa_protocoloId_clinicId", fields: [protocoloId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  diagnosticoProtocoloByProtocoloEtapa DiagnosticoProtocolo[] @relation("DiagnosticoProtocolo_protocoloEtapaId_clinicId")
+  @@unique([id, clinicId])
+  @@unique([protocoloId, sequencia])
+  @@map("PROTOCOLO_ETAPA")
+}
+
+model Relatorio {
+  id String @id
+  clinicId String @map("clinic_id")
+  patientChartId String @map("patient_chart_id")
+  patientMembershipId String @map("patient_membership_id")
+  atendimentoId String? @map("atendimento_id")
+  generatedByMembershipId String @map("generated_by_membership_id")
+  tipo String
+  arquivoPdf String @unique @map("arquivo_pdf")
+  dtGeracao String @map("dt_geracao")
+  createdAt String @default(dbgenerated("CURRENT_TIMESTAMP")) @map("created_at")
+  pacienteId String? @map("paciente_id")
+  generatedByMembership Membership @relation("Relatorio_generatedByMembershipId_clinicId", fields: [generatedByMembershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  atendimento Atendimento? @relation("Relatorio_atendimentoId_clinicId", fields: [atendimentoId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  patientMembership Membership @relation("Relatorio_patientMembershipId_clinicId", fields: [patientMembershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  patientChart Prontuario @relation("Relatorio_patientChartId_clinicId", fields: [patientChartId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  paciente Paciente? @relation("Relatorio_pacienteId", fields: [pacienteId], references: [id], onDelete: NoAction)
+  @@index([clinicId, patientMembershipId, dtGeracao], map: "reports_patient_date_idx")
+  @@map("RELATORIO")
+}
+
+model Terapeuta {
+  membershipId String @id @map("membership_id")
+  clinicId String @map("clinic_id")
+  registroProf String? @map("registro_prof")
+  cpf String?
+  formacao String?
+  ativo Int @default(1)
+  dtAtualizacao String? @map("dt_atualizacao")
+  id String? @unique(map: "terapeuta_workbook_id_idx")
+  usuarioId String? @map("usuario_id")
+  clinicaId String? @map("clinica_id")
+  membership Membership @relation("Terapeuta_membershipId_clinicId", fields: [membershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  clinica Clinica? @relation("Terapeuta_clinicaId", fields: [clinicaId], references: [id], onDelete: NoAction)
+  usuario Usuario? @relation("Terapeuta_usuarioId", fields: [usuarioId], references: [id], onDelete: NoAction)
+  agendaByTerapeuta Agenda[] @relation("Agenda_terapeutaId")
+  atendimentoByTerapeuta Atendimento[] @relation("Atendimento_terapeutaId")
+  diagnosticoByTerapeuta Diagnostico[] @relation("Diagnostico_terapeutaId")
+  protocoloByTerapeuta Protocolo[] @relation("Protocolo_terapeutaId")
+  terapeutaEspecialidadeByTerapeuta TerapeutaEspecialidade[] @relation("TerapeutaEspecialidade_terapeutaId")
+  @@unique([clinicId, cpf], map: "therapist_profiles_cpf_per_clinic_idx")
+  @@map("TERAPEUTA")
+}
+
+model TerapeutaEspecialidade {
+  id String @id
+  clinicId String @map("clinic_id")
+  therapistMembershipId String @map("therapist_membership_id")
+  especialidadeId String @map("especialidade_id")
+  createdAt String @default(dbgenerated("CURRENT_TIMESTAMP")) @map("created_at")
+  terapeutaId String? @map("terapeuta_id")
+  especialidade Especialidade @relation("TerapeutaEspecialidade_especialidadeId_clinicId", fields: [especialidadeId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  therapistMembership Membership @relation("TerapeutaEspecialidade_therapistMembershipId_clinicId", fields: [therapistMembershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  terapeuta Terapeuta? @relation("TerapeutaEspecialidade_terapeutaId", fields: [terapeutaId], references: [id], onDelete: NoAction)
+  @@unique([therapistMembershipId, especialidadeId])
+  @@index([clinicId, therapistMembershipId], map: "therapist_specialties_clinic_idx")
+  @@map("TERAPEUTA_ESPECIALIDADE")
+}
+
+model Terapia {
+  id String @id
+  clinicId String @map("clinic_id")
+  especialidadeId String @map("especialidade_id")
+  nome String
+  descricao String?
+  duracaoMin Int @map("duracao_min")
+  price Float?
+  ativa Int @default(1)
+  especialidade Especialidade @relation("Terapia_especialidadeId_clinicId", fields: [especialidadeId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  clinic Clinica @relation("Terapia_clinicId", fields: [clinicId], references: [id], onDelete: Restrict)
+  agendaByTerapia Agenda[] @relation("Agenda_terapiaId_clinicId")
+  atendimentoByTerapia Atendimento[] @relation("Atendimento_terapiaId_clinicId")
+  protocoloByTerapia Protocolo[] @relation("Protocolo_terapiaId_clinicId")
+  therapistTherapyByTherapy TherapistTherapy[] @relation("TherapistTherapy_therapyId_clinicId")
+  @@unique([id, clinicId])
+  @@unique([clinicId, nome])
+  @@map("TERAPIA")
+}
+
+model Usuario {
+  id String @id
+  email String @unique
+  passwordHash String @map("password_hash")
+  nome String
+  telefone String?
+  ativo Int @default(1)
+  dtRegistro String @map("dt_registro")
+  dtUltAcesso String? @map("dt_ult_acesso")
+  dtAtualizacao String? @map("dt_atualizacao")
+  agendaByCancelledByUser Agenda[] @relation("Agenda_cancelledByUserId")
+  auditoriaByUsuario Auditoria[] @relation("Auditoria_usuarioId")
+  pacienteByUsuario Paciente[] @relation("Paciente_usuarioId")
+  terapeutaByUsuario Terapeuta[] @relation("Terapeuta_usuarioId")
+  appointmentEventByActorUser AppointmentEvent[] @relation("AppointmentEvent_actorUserId")
+  membershipByUser Membership[] @relation("Membership_userId")
+  sessionByUser Session[] @relation("Session_userId")
+  @@map("USUARIO")
+}
+
+model AnamnesisAssignment {
+  id String @id
+  clinicId String @map("clinic_id")
+  anamnesisId String @map("anamnesis_id")
+  questionId String @map("question_id")
+  displayOrder Int @default(0) @map("display_order")
+  createdAt String @default(dbgenerated("CURRENT_TIMESTAMP")) @map("created_at")
+  question Pergunta @relation("AnamnesisAssignment_questionId_clinicId", fields: [questionId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  anamnesis Anamnese @relation("AnamnesisAssignment_anamnesisId_clinicId", fields: [anamnesisId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  @@unique([anamnesisId, questionId])
+  @@map("anamnesis_assignments")
+}
+
+model AnamnesisQuestionOption {
+  id String @id
+  clinicId String @map("clinic_id")
+  questionId String @map("question_id")
+  displayOrder Int @default(0) @map("display_order")
+  description String
+  createdAt String @default(dbgenerated("CURRENT_TIMESTAMP")) @map("created_at")
+  question Pergunta @relation("AnamnesisQuestionOption_questionId_clinicId", fields: [questionId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  @@unique([questionId, displayOrder])
+  @@map("anamnesis_question_options")
+}
+
+model AppointmentEvent {
+  id String @id
+  appointmentId String @map("appointment_id")
+  actorUserId String? @map("actor_user_id")
+  action String
+  details String?
+  createdAt String @map("created_at")
+  actorUser Usuario? @relation("AppointmentEvent_actorUserId", fields: [actorUserId], references: [id], onDelete: SetNull)
+  appointment Agenda @relation("AppointmentEvent_appointmentId", fields: [appointmentId], references: [id], onDelete: Restrict)
+  @@map("appointment_events")
+}
+
+model AvailabilityRule {
+  id String @id
+  clinicId String @map("clinic_id")
+  therapistMembershipId String @map("therapist_membership_id")
+  weekday Int
+  startsAt String @map("starts_at")
+  endsAt String @map("ends_at")
+  active Int @default(1)
+  therapistMembership Membership @relation("AvailabilityRule_therapistMembershipId_clinicId", fields: [therapistMembershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  @@map("availability_rules")
+}
+
+model ClinicalRecord {
+  id String @id
+  clinicId String @map("clinic_id")
+  patientMembershipId String @map("patient_membership_id")
+  authorMembershipId String @map("author_membership_id")
+  type String
+  title String
+  content String
+  releasedAt String? @map("released_at")
+  createdAt String @map("created_at")
+  authorMembership Membership @relation("ClinicalRecord_authorMembershipId_clinicId", fields: [authorMembershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  patientMembership Membership @relation("ClinicalRecord_patientMembershipId_clinicId", fields: [patientMembershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  clinic Clinica @relation("ClinicalRecord_clinicId", fields: [clinicId], references: [id], onDelete: Restrict)
+  @@index([clinicId, patientMembershipId, createdAt], map: "clinical_records_patient_idx")
+  @@map("clinical_records")
+}
+
+model Membership {
+  id String @id
+  clinicId String @map("clinic_id")
+  userId String @map("user_id")
+  role String
+  status String @default("ACTIVE")
+  createdAt String @map("created_at")
+  profileId String? @map("profile_id")
+  profile Perfil? @relation("Membership_profileId", fields: [profileId], references: [id], onDelete: NoAction)
+  user Usuario @relation("Membership_userId", fields: [userId], references: [id], onDelete: Restrict)
+  clinic Clinica @relation("Membership_clinicId", fields: [clinicId], references: [id], onDelete: Restrict)
+  agendaByTherapistMembership Agenda[] @relation("Agenda_therapistMembershipId_clinicId")
+  agendaByPatientMembership Agenda[] @relation("Agenda_patientMembershipId_clinicId")
+  analiseLinguaByAnalyzedByMembership AnaliseLingua[] @relation("AnaliseLingua_analyzedByMembershipId_clinicId")
+  analiseLinguaByPatientMembership AnaliseLingua[] @relation("AnaliseLingua_patientMembershipId_clinicId")
+  anamneseByCreatedByMembership Anamnese[] @relation("Anamnese_createdByMembershipId_clinicId")
+  anexoByUploadedByMembership Anexo[] @relation("Anexo_uploadedByMembershipId_clinicId")
+  atendimentoByTherapistMembership Atendimento[] @relation("Atendimento_therapistMembershipId_clinicId")
+  atendimentoByPatientMembership Atendimento[] @relation("Atendimento_patientMembershipId_clinicId")
+  biowellAvaliacaoByAssessedByMembership BiowellAvaliacao[] @relation("BiowellAvaliacao_assessedByMembershipId_clinicId")
+  biowellAvaliacaoByPatientMembership BiowellAvaliacao[] @relation("BiowellAvaliacao_patientMembershipId_clinicId")
+  diagnosticoByTherapistMembership Diagnostico[] @relation("Diagnostico_therapistMembershipId_clinicId")
+  diagnosticoByPatientMembership Diagnostico[] @relation("Diagnostico_patientMembershipId_clinicId")
+  evolucaoByAuthorMembership Evolucao[] @relation("Evolucao_authorMembershipId_clinicId")
+  pacienteByMembership Paciente[] @relation("Paciente_membershipId_clinicId")
+  pacoteByPatientMembership Pacote[] @relation("Pacote_patientMembershipId_clinicId")
+  pagamentoByPatientMembership Pagamento[] @relation("Pagamento_patientMembershipId_clinicId")
+  prontuarioByPatientMembership Prontuario? @relation("Prontuario_patientMembershipId_clinicId")
+  protocoloByTherapistMembership Protocolo[] @relation("Protocolo_therapistMembershipId_clinicId")
+  relatorioByGeneratedByMembership Relatorio[] @relation("Relatorio_generatedByMembershipId_clinicId")
+  relatorioByPatientMembership Relatorio[] @relation("Relatorio_patientMembershipId_clinicId")
+  terapeutaByMembership Terapeuta[] @relation("Terapeuta_membershipId_clinicId")
+  terapeutaEspecialidadeByTherapistMembership TerapeutaEspecialidade[] @relation("TerapeutaEspecialidade_therapistMembershipId_clinicId")
+  availabilityRuleByTherapistMembership AvailabilityRule[] @relation("AvailabilityRule_therapistMembershipId_clinicId")
+  clinicalRecordByAuthorMembership ClinicalRecord[] @relation("ClinicalRecord_authorMembershipId_clinicId")
+  clinicalRecordByPatientMembership ClinicalRecord[] @relation("ClinicalRecord_patientMembershipId_clinicId")
+  scheduleBlockByTherapistMembership ScheduleBlock[] @relation("ScheduleBlock_therapistMembershipId_clinicId")
+  therapistTherapyByMembership TherapistTherapy[] @relation("TherapistTherapy_membershipId_clinicId")
+  @@unique([id, clinicId])
+  @@unique([clinicId, userId])
+  @@index([clinicId, role, status], map: "memberships_clinic_role_idx")
+  @@index([userId, status], map: "memberships_user_idx")
+  @@map("memberships")
+}
+
+model Notification {
+  id String @id
+  clinicId String @map("clinic_id")
+  recipient String
+  channel String
+  event String
+  status String
+  details String?
+  createdAt String @map("created_at")
+  clinic Clinica @relation("Notification_clinicId", fields: [clinicId], references: [id], onDelete: Restrict)
+  @@index([clinicId, status, createdAt], map: "notifications_clinic_idx")
+  @@map("notifications")
+}
+
+model ScheduleBlock {
+  id String @id
+  clinicId String @map("clinic_id")
+  therapistMembershipId String @map("therapist_membership_id")
+  startsAt String @map("starts_at")
+  endsAt String @map("ends_at")
+  reason String?
+  therapistMembership Membership @relation("ScheduleBlock_therapistMembershipId_clinicId", fields: [therapistMembershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  @@map("schedule_blocks")
+}
+
+model SchemaMigration {
+  version String @id
+  appliedAt String @map("applied_at")
+  @@map("schema_migrations")
+}
+
+model Session {
+  tokenHash String @id @map("token_hash")
+  userId String @map("user_id")
+  clinicId String @map("clinic_id")
+  expiresAt String @map("expires_at")
+  createdAt String @map("created_at")
+  clinic Clinica @relation("Session_clinicId", fields: [clinicId], references: [id], onDelete: Cascade)
+  user Usuario @relation("Session_userId", fields: [userId], references: [id], onDelete: Cascade)
+  @@map("sessions")
+}
+
+model TherapistTherapy {
+  clinicId String @map("clinic_id")
+  membershipId String @map("membership_id")
+  therapyId String @map("therapy_id")
+  therapy Terapia @relation("TherapistTherapy_therapyId_clinicId", fields: [therapyId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  membership Membership @relation("TherapistTherapy_membershipId_clinicId", fields: [membershipId, clinicId], references: [id, clinicId], onDelete: Restrict)
+  @@id([membershipId, therapyId])
+  @@map("therapist_therapies")
+}
+
+model WorkbookImportBatch {
+  id String @id
+  sourceName String @map("source_name")
+  sourceSha256 String @map("source_sha256")
+  clinicId String? @map("clinic_id")
+  importedAt String @map("imported_at")
+  importedRows Int @map("imported_rows")
+  reusedRows Int @map("reused_rows")
+  skippedRows Int @map("skipped_rows")
+  summaryJson String @map("summary_json")
+  clinic Clinica? @relation("WorkbookImportBatch_clinicId", fields: [clinicId], references: [id], onDelete: Restrict)
+  workbookImportRejectionByBatch WorkbookImportRejection[] @relation("WorkbookImportRejection_batchId")
+  @@unique([sourceName, sourceSha256])
+  @@map("workbook_import_batches")
+}
+
+model WorkbookImportRejection {
+  id String @id
+  batchId String @map("batch_id")
+  sheetName String @map("sheet_name")
+  sourceId String? @map("source_id")
+  reasonCode String @map("reason_code")
+  unresolvedFieldsJson String @map("unresolved_fields_json")
+  sourceRowJson String @map("source_row_json")
+  createdAt String @map("created_at")
+  batch WorkbookImportBatch @relation("WorkbookImportRejection_batchId", fields: [batchId], references: [id], onDelete: Cascade)
+  @@index([batchId, sheetName], map: "workbook_import_rejections_batch_idx")
+  @@map("workbook_import_rejections")
+}
