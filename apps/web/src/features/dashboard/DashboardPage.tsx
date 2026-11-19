@@ -6,6 +6,7 @@ interface DashboardData {
   appointmentsForDate: Appointment[];
   selectedDate: string;
   lastEncounter: LastEncounter | null;
+  recentPatients: TherapistRecentPatient[];
 }
 
 interface LastEncounter {
@@ -15,9 +16,24 @@ interface LastEncounter {
   therapyName: string;
 }
 
+interface TherapistRecentPatient {
+  membershipId: string;
+  fullName: string;
+  encounterId: string;
+  attendedAt: string;
+  therapyId: string;
+  therapyName: string;
+}
+
 type ProtocolSelection =
   | { kind: "therapy"; id: string; name: string }
-  | { kind: "encounter"; id: string; name: string; attendedAt: string };
+  | {
+      kind: "encounter";
+      id: string;
+      attendedAt: string;
+      therapyName: string;
+      patientName?: string;
+    };
 
 function formatEncounterDate(value: string, timezone: string): string {
   return new Intl.DateTimeFormat("pt-BR", {
@@ -94,6 +110,7 @@ export function DashboardPage({ session }: DashboardPageProps) {
   const [loadingProtocols, setLoadingProtocols] = useState(false);
   const [protocolError, setProtocolError] = useState("");
   const isPatient = session.activeClinic.role === "PATIENT";
+  const isTherapist = session.activeClinic.role === "THERAPIST";
 
   useEffect(() => {
     let active = true;
@@ -153,15 +170,16 @@ export function DashboardPage({ session }: DashboardPageProps) {
     );
   }
 
-  function toggleEncounter(encounter: LastEncounter) {
+  function toggleEncounter(encounter: LastEncounter, patientName?: string) {
     setSelectedProtocol((current) =>
       current?.kind === "encounter" && current.id === encounter.id
         ? null
         : {
             kind: "encounter",
             id: encounter.id,
-            name: encounter.therapyName,
             attendedAt: encounter.attendedAt,
+            therapyName: encounter.therapyName,
+            patientName,
           },
     );
   }
@@ -222,7 +240,7 @@ export function DashboardPage({ session }: DashboardPageProps) {
           <strong>{data?.counts.appointmentsToday ?? "—"}</strong>
           <span className="stat-footnote">Na clínica selecionada</span>
         </article>
-        <article className="stat-card">
+        <article className={`stat-card ${isTherapist ? "dashboard-patients-card" : ""}`}>
           <span className="stat-icon">{isPatient ? "◷" : "♡"}</span>
           <span className="stat-label">{isPatient ? "Último Atendimento" : "Pacientes ativos"}</span>
           {isPatient ? (
@@ -241,6 +259,29 @@ export function DashboardPage({ session }: DashboardPageProps) {
             ) : (
               <span className="stat-footnote">Nenhum atendimento registrado</span>
             )
+          ) : isTherapist ? (
+            data?.recentPatients.length ? (
+              <div className="dashboard-recent-patients">
+                {data.recentPatients.map((patient) => (
+                  <button
+                    key={patient.membershipId}
+                    type="button"
+                    className="dashboard-recent-patient-link"
+                    aria-expanded={selectedProtocol?.kind === "encounter" && selectedProtocol.id === patient.encounterId}
+                    onClick={() => toggleEncounter({
+                      id: patient.encounterId,
+                      attendedAt: patient.attendedAt,
+                      therapyId: patient.therapyId,
+                      therapyName: patient.therapyName,
+                    }, patient.fullName)}
+                  >
+                    {patient.fullName}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <span className="stat-footnote">Nenhum paciente com atendimento recente</span>
+            )
           ) : (
             <>
               <strong>{data?.counts.patients ?? "—"}</strong>
@@ -249,14 +290,18 @@ export function DashboardPage({ session }: DashboardPageProps) {
           )}
         </article>
       </div>
-      {isPatient && selectedProtocol?.kind === "encounter" && (
+      {(isPatient || isTherapist) && selectedProtocol?.kind === "encounter" && (
         <section className="panel dashboard-last-encounter-panel">
           <div className="panel-heading">
             <div>
-              <h2>Protocolos vinculados ao último atendimento</h2>
+              <h2>
+                {selectedProtocol.patientName
+                  ? `Protocolos do atendimento de ${selectedProtocol.patientName}`
+                  : "Protocolos vinculados ao último atendimento"}
+              </h2>
               <p className="muted">
                 {formatEncounterDate(selectedProtocol.attendedAt, session.activeClinic.timezone)}
-                {" · "}{selectedProtocol.name}
+                {" · "}{selectedProtocol.therapyName}
               </p>
             </div>
           </div>
@@ -320,7 +365,9 @@ export function DashboardPage({ session }: DashboardPageProps) {
                   </article>
                   {therapyExpanded && (
                     renderProtocolDetails(
-                      `Protocolos vinculados a ${selectedProtocol?.name ?? appointment.therapyName}`,
+                      `Protocolos vinculados a ${
+                        selectedProtocol?.kind === "therapy" ? selectedProtocol.name : appointment.therapyName
+                      }`,
                       "Esta terapia não possui protocolos cadastrados.",
                     )
                   )}

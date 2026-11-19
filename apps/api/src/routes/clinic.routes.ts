@@ -138,6 +138,36 @@ clinicRouter.get("/dashboard", requireAuth, (request, response) => {
            LIMIT 1`,
         ).get(auth.clinicId, auth.membershipId) ?? null
       : null;
+  const recentPatients =
+    auth.role === "THERAPIST"
+      ? db.prepare(
+          `SELECT patientMembership.id AS membershipId, patientUser.nome AS fullName,
+                  encounter.id AS encounterId, encounter.dt_atend AS attendedAt,
+                  encounter.terapia_id AS therapyId, therapy.nome AS therapyName
+           FROM memberships patientMembership
+           JOIN USUARIO patientUser ON patientUser.id = patientMembership.user_id AND patientUser.ativo = 1
+           JOIN PACIENTE patientProfile
+             ON patientProfile.membership_id = patientMembership.id
+            AND patientProfile.clinic_id = patientMembership.clinic_id
+            AND patientProfile.ativo = 1
+           JOIN ATENDIMENTO encounter ON encounter.id = (
+             SELECT latest.id
+             FROM ATENDIMENTO latest
+             WHERE latest.clinic_id = patientMembership.clinic_id
+               AND latest.patient_membership_id = patientMembership.id
+               AND latest.therapist_membership_id = ?
+               AND latest.status != 'CANCELLED'
+             ORDER BY latest.dt_atend DESC, latest.id DESC
+             LIMIT 1
+           )
+           JOIN TERAPIA therapy ON therapy.id = encounter.terapia_id AND therapy.clinic_id = encounter.clinic_id
+           WHERE patientMembership.clinic_id = ?
+             AND patientMembership.role = 'PATIENT'
+             AND patientMembership.status = 'ACTIVE'
+           ORDER BY encounter.dt_atend DESC, encounter.id DESC
+           LIMIT 4`,
+        ).all(auth.membershipId, auth.clinicId)
+      : [];
   const todayRange = localDateRange(dateInTimezone(new Date(), auth.clinicTimezone), auth.clinicTimezone);
   const todayAppointments = db
     .prepare(
@@ -154,6 +184,7 @@ clinicRouter.get("/dashboard", requireAuth, (request, response) => {
     appointmentsForDate: appointments,
     selectedDate,
     lastEncounter,
+    recentPatients,
   });
 });
 

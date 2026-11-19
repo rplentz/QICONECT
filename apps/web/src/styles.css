@@ -150,6 +150,10 @@ h3 { margin-bottom: 8px; font-size: 1.03rem; }
 .status-cancelled, .status-no_show { background: #f7eeee; color: #9c5d5d; }
 .dashboard-agenda-heading { align-items: flex-end; }
 .dashboard-date-filter { width: min(220px, 100%); }
+.dashboard-patients-card .stat-icon { grid-row: 1 / span 6; }
+.dashboard-recent-patients { display: grid; grid-column: 2; gap: 7px; margin-top: 8px; }
+.dashboard-recent-patient-link { width: fit-content; padding: 0; border: 0; background: transparent; color: var(--green-800); font-size: 0.78rem; font-weight: 700; text-align: left; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.dashboard-recent-patient-link:hover { color: var(--green-900); }
 .dashboard-last-encounter-link { grid-column: 2; justify-self: start; margin-top: 9px; padding: 0; border: 0; background: transparent; color: var(--green-800); font-family: Manrope, sans-serif; font-size: 1.15rem; font-weight: 800; text-align: left; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .dashboard-last-encounter-link:hover { color: var(--green-900); }
 .dashboard-last-encounter-panel .dashboard-protocols { margin: 0; }

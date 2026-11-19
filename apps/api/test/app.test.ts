@@ -201,6 +201,7 @@ describe("QIConect API MVP", () => {
 
   it("filters dashboard appointments by clinic date and returns the therapy protocols", async () => {
     const adminCookie = await login("admin@qiconect.local", "Admin123!");
+    const therapistCookie = await login("terapeuta@qiconect.local", "Terapeuta123!");
     const patientCookie = await login(demoPatient.email, demoPatient.password);
     const clinic = db.prepare(
       `SELECT c.id, c.timezone FROM CLINICA c
@@ -326,6 +327,17 @@ describe("QIConect API MVP", () => {
       therapyId: therapy.id,
       therapyName: expect.any(String),
     }));
+
+    const therapistDashboard = await fetch(
+      `${baseUrl}/api/v1/dashboard?date=${encodeURIComponent(clinicDate)}`,
+      { headers: { cookie: therapistCookie } },
+    );
+    const therapistData = await therapistDashboard.json() as {
+      recentPatients: Array<{ fullName: string; encounterId: string; attendedAt: string }>;
+    };
+    expect(therapistData.recentPatients).toEqual([
+      expect.objectContaining({ fullName: "Joana Paciente", encounterId: encounter.id }),
+    ]);
 
     const otherDate = new Date(`${clinicDate}T00:00:00.000Z`);
     otherDate.setUTCDate(otherDate.getUTCDate() + 1);
