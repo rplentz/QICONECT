@@ -14,7 +14,21 @@
   },
   "devDependencies": {
     "concurrently": "^9.1.2",
+    "prisma": "8.0.0-rc.33",
     "typescript": "^5.7.3",
     "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "@prisma/composer": "0.38.0",
+    "@prisma/composer-prisma-cloud": "0.38.0",
+    "@prisma/orm-postgres": "8.0.0-rc.23",
+    "effect": "4.0.5"
+  },
+  "overrides": {
+    "@effect/platform-bun": "4.0.5",
+    "@effect/platform-node": "4.0.5",
+    "@effect/platform-node-shared": "4.0.5",
+    "@effect/vitest": "4.0.5",
+    "effect": "4.0.5"
   }
 }
