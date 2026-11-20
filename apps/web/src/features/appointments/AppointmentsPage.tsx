@@ -115,7 +115,44 @@ export function AppointmentsPage({ session }: AppointmentsPageProps) {
     }
   }
 
-  const upcoming = appointments.filter((appointment) => appointment.status === "CONFIRMED");
+  async function markCompleted(appointment: Appointment) {
+    if (!window.confirm("Deseja marcar este atendimento como realizado?")) return;
+    setError("");
+    setNotice("");
+    try {
+      await apiRequest(`/appointments/${appointment.id}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "COMPLETED" }),
+      });
+      setNotice("Atendimento marcado como realizado.");
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Não foi possível atualizar o status.");
+    }
+  }
+
+  const upcoming = appointments.filter((appointment) => appointment.status === "CONFIRMED" && !appointment.rescheduledAt);
+  const rescheduled = appointments.filter((appointment) => appointment.status === "CONFIRMED" && appointment.rescheduledAt);
+  const cancelled = appointments.filter((appointment) => appointment.status === "CANCELLED");
+  const isTherapist = session.activeClinic.role === "THERAPIST";
+
+  function appointmentList(items: Appointment[], emptyMessage: string, showActions = false) {
+    return items.length === 0 ? <p className="empty-state">{emptyMessage}</p> : (
+      <div className="appointment-list">
+        {items.map((appointment) => (
+          <article className="appointment-row" key={appointment.id}>
+            <div className="appointment-date"><strong>{new Intl.DateTimeFormat("pt-BR", { day: "2-digit" }).format(new Date(appointment.startsAt))}</strong><span>{new Intl.DateTimeFormat("pt-BR", { month: "short" }).format(new Date(appointment.startsAt)).replace(".", "")}</span></div>
+            <div className="appointment-main"><strong>{appointment.therapyName}</strong><span className="muted">{session.activeClinic.role === "PATIENT" ? appointment.therapistName : appointment.patientName}</span></div>
+            <span className="appointment-time">{formatDate(appointment.startsAt)}</span>
+            <span className={`status-pill status-${appointment.status.toLowerCase()}`}>{appointment.status === "CANCELLED" ? "Cancelado" : appointment.rescheduledAt ? "Remarcado" : "Confirmado"}</span>
+            {showActions && isTherapist && <button className="button button-success" onClick={() => void markCompleted(appointment)}>Realizado</button>}
+            {showActions && <button className="button button-secondary" onClick={() => void reschedule(appointment)}>Remarcar</button>}
+            {showActions && <button className="button button-danger" onClick={() => void cancel(appointment)}>Cancelar</button>}
+          </article>
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div className="page-content">
@@ -144,20 +181,15 @@ export function AppointmentsPage({ session }: AppointmentsPageProps) {
       </form>
       <section className="panel">
         <div className="panel-heading"><div><h2>Atendimentos confirmados</h2><p className="muted">Cancelamentos pelo paciente exigem pelo menos quatro horas de antecedência.</p></div><span className="soft-badge">{upcoming.length} confirmados</span></div>
-        {upcoming.length === 0 ? <p className="empty-state">Nenhum atendimento confirmado.</p> : (
-          <div className="appointment-list">
-            {upcoming.map((appointment) => (
-              <article className="appointment-row" key={appointment.id}>
-                <div className="appointment-date"><strong>{new Intl.DateTimeFormat("pt-BR", { day: "2-digit" }).format(new Date(appointment.startsAt))}</strong><span>{new Intl.DateTimeFormat("pt-BR", { month: "short" }).format(new Date(appointment.startsAt)).replace(".", "")}</span></div>
-                <div className="appointment-main"><strong>{appointment.therapyName}</strong><span className="muted">{session.activeClinic.role === "PATIENT" ? appointment.therapistName : appointment.patientName}</span></div>
-                <span className="appointment-time">{formatDate(appointment.startsAt)}</span>
-                <span className="status-pill status-confirmed">Confirmado</span>
-                <button className="button button-secondary" onClick={() => reschedule(appointment)}>Remarcar</button>
-                <button className="button button-danger" onClick={() => cancel(appointment)}>Cancelar</button>
-              </article>
-            ))}
-          </div>
-        )}
+        {appointmentList(upcoming, "Nenhum atendimento confirmado.", true)}
+      </section>
+      <section className="panel appointment-history-panel">
+        <div className="panel-heading"><div><h2>Atendimentos remarcados</h2><p className="muted">Histórico de horários que foram alterados.</p></div><span className="soft-badge">{rescheduled.length} remarcados</span></div>
+        {appointmentList(rescheduled, "Nenhum atendimento remarcado.")}
+      </section>
+      <section className="panel appointment-history-panel">
+        <div className="panel-heading"><div><h2>Atendimentos cancelados</h2><p className="muted">Histórico de atendimentos cancelados.</p></div><span className="soft-badge">{cancelled.length} cancelados</span></div>
+        {appointmentList(cancelled, "Nenhum atendimento cancelado.")}
       </section>
     </div>
   );

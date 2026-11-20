@@ -65,6 +65,10 @@ export async function seedDemoData(): Promise<void> {
       }
     }
 
+    db.prepare(
+      "UPDATE PACIENTE SET terapeuta_id = (SELECT id FROM TERAPEUTA WHERE membership_id = ?) WHERE membership_id = ? AND clinic_id = ?",
+    ).run(membershipIds.THERAPIST, membershipIds.PATIENT, clinicId);
+
     db.prepare("INSERT INTO therapist_therapies (clinic_id, membership_id, therapy_id) VALUES (?, ?, ?)").run(
       clinicId,
       membershipIds.THERAPIST,

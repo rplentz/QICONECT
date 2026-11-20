@@ -15,7 +15,9 @@ const appointmentSelection = `
          a.therapist_membership_id AS therapistMembershipId, a.terapia_id AS therapyId,
          a.dt_inicio AS startsAt, a.dt_fim AS endsAt, a.status,
          a.cancellation_reason AS cancellationReason, t.nome AS therapyName,
-         patientUser.nome AS patientName, therapistUser.nome AS therapistName
+         patientUser.nome AS patientName, therapistUser.nome AS therapistName,
+         (SELECT MAX(event.created_at) FROM appointment_events event
+          WHERE event.appointment_id = a.id AND event.action = 'RESCHEDULED') AS rescheduledAt
   FROM AGENDA a
   JOIN TERAPIA t ON t.id = a.terapia_id AND t.clinic_id = a.clinic_id
   JOIN memberships patientMembership ON patientMembership.id = a.patient_membership_id

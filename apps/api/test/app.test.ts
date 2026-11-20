@@ -385,6 +385,148 @@ describe("QIConect API MVP", () => {
     expect(unownedEncounterResponse.status).toBe(404);
   });
 
+  it("supports role-scoped attendance lists and the clinical encounter tabs", async () => {
+    const therapistCookie = await login("terapeuta@qiconect.local", "Terapeuta123!");
+    const patientCookie = await login(demoPatient.email, demoPatient.password);
+    const adminCookie = await login("admin@qiconect.local", "Admin123!");
+    const clinic = db.prepare(
+      `SELECT c.id FROM CLINICA c JOIN memberships m ON m.clinic_id = c.id
+       JOIN USUARIO u ON u.id = m.user_id WHERE u.email = 'admin@qiconect.local' LIMIT 1`,
+    ).get() as { id: string };
+    const patient = db.prepare(
+      `SELECT m.id, p.id AS profileId FROM memberships m
+       JOIN USUARIO u ON u.id = m.user_id JOIN PACIENTE p ON p.membership_id = m.id
+       WHERE u.email = ? AND m.clinic_id = ?`,
+    ).get(demoPatient.email, clinic.id) as { id: string; profileId: string };
+    const therapist = db.prepare(
+      `SELECT m.id, t.id AS profileId FROM memberships m
+       JOIN USUARIO u ON u.id = m.user_id JOIN TERAPEUTA t ON t.membership_id = m.id
+       WHERE u.email = 'terapeuta@qiconect.local' AND m.clinic_id = ?`,
+    ).get(clinic.id) as { id: string; profileId: string };
+    const therapy = db.prepare("SELECT id FROM TERAPIA WHERE clinic_id = ? LIMIT 1").get(clinic.id) as { id: string };
+    const appointmentId = crypto.randomUUID();
+    const startsAt = new Date(Date.now() - 15 * 60_000).toISOString();
+    const endsAt = new Date(Date.now() + 45 * 60_000).toISOString();
+    const createdAt = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO AGENDA
+       (id, clinic_id, patient_membership_id, therapist_membership_id, terapia_id, dt_inicio, dt_fim, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'CONFIRMED', ?, ?)`,
+    ).run(appointmentId, clinic.id, patient.id, therapist.id, therapy.id, startsAt, endsAt, createdAt, createdAt);
+
+    const therapistList = await fetch(`${baseUrl}/api/v1/encounters`, { headers: { cookie: therapistCookie } });
+    const therapistListData = await therapistList.json() as { encounters: Array<{ appointmentId: string; patientName: string }> };
+    expect(therapistList.status).toBe(200);
+    expect(therapistListData.encounters).toContainEqual(expect.objectContaining({
+      appointmentId,
+      patientName: "Joana Paciente",
+      encounterId: null,
+    }));
+
+    const patientList = await fetch(`${baseUrl}/api/v1/encounters`, { headers: { cookie: patientCookie } });
+    const patientListData = await patientList.json() as { encounters: Array<{ appointmentId: string; patientName: string }> };
+    expect(patientList.status).toBe(200);
+    expect(patientListData.encounters).toContainEqual(expect.objectContaining({ appointmentId, patientName: "Joana Paciente" }));
+
+    const start = await fetch(`${baseUrl}/api/v1/encounters/${appointmentId}/start`, {
+      method: "POST",
+      headers: { cookie: therapistCookie },
+    });
+    expect(start.status).toBe(201);
+    const started = await start.json() as { attendance: { id: string; status: string } };
+    expect(started.attendance.status).toBe("ACTIVE");
+
+    const questionResponse = await fetch(`${baseUrl}/api/v1/encounters/${appointmentId}/questions`, {
+      method: "POST",
+      headers: { cookie: therapistCookie, "content-type": "application/json" },
+      body: JSON.stringify({ description: "Qual é a principal queixa?" }),
+    });
+    expect(questionResponse.status).toBe(201);
+    const { question } = await questionResponse.json() as { question: { id: string } };
+    const questionId = question.id;
+    const anamnesis = await fetch(`${baseUrl}/api/v1/encounters/${appointmentId}/anamneses`, {
+      method: "POST",
+      headers: { cookie: therapistCookie, "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "Anamnese clínica",
+        description: "Queixa principal fictícia para teste.",
+        selectedQuestionIds: [questionId],
+        answers: [{ questionId, answer: "Resposta fictícia." }],
+      }),
+    });
+    expect(anamnesis.status).toBe(201);
+
+    const diagnosis = await fetch(`${baseUrl}/api/v1/encounters/${appointmentId}/diagnoses`, {
+      method: "POST",
+      headers: { cookie: therapistCookie, "content-type": "application/json" },
+      body: JSON.stringify({ description: "Registro de teste", diagnosedAt: new Date().toISOString().slice(0, 10) }),
+    });
+    expect(diagnosis.status).toBe(201);
+    const { id: diagnosisId } = await diagnosis.json() as { id: string };
+
+    const protocol = await fetch(`${baseUrl}/api/v1/registrations/protocol`, {
+      method: "POST",
+      headers: { cookie: adminCookie, "content-type": "application/json" },
+      body: JSON.stringify({ therapyId: therapy.id, name: "Protocolo do atendimento", active: true }),
+    });
+    expect(protocol.status).toBe(201);
+    const { id: protocolId } = await protocol.json() as { id: string };
+    const step = await fetch(`${baseUrl}/api/v1/registrations/protocol-steps`, {
+      method: "POST",
+      headers: { cookie: adminCookie, "content-type": "application/json" },
+      body: JSON.stringify({ protocolId, sequence: 1, description: "Etapa inicial de teste" }),
+    });
+    expect(step.status).toBe(201);
+
+    const attach = await fetch(`${baseUrl}/api/v1/encounters/${appointmentId}/protocols`, {
+      method: "POST",
+      headers: { cookie: therapistCookie, "content-type": "application/json" },
+      body: JSON.stringify({ diagnosisId, protocolId }),
+    });
+    expect(attach.status).toBe(201);
+    const link = db.prepare("SELECT id FROM DIAGNOSTICO_PROTOCOLO WHERE diagnostico_id = ?").get(diagnosisId) as { id: string };
+    const evolution = await fetch(`${baseUrl}/api/v1/encounters/${appointmentId}/evolutions`, {
+      method: "POST",
+      headers: { cookie: therapistCookie, "content-type": "application/json" },
+      body: JSON.stringify({
+        diagnosisProtocolId: link.id,
+        description: "Evolução fictícia para teste.",
+        evolvedAt: new Date().toISOString().slice(0, 10),
+        status: "IN_PROGRESS",
+      }),
+    });
+    expect(evolution.status).toBe(201);
+
+    const detail = await fetch(`${baseUrl}/api/v1/encounters/${appointmentId}`, { headers: { cookie: therapistCookie } });
+    const detailData = await detail.json() as {
+      anamneses: Array<{ answers: Array<{ answer: string }> }>;
+      diagnoses: Array<{ id: string }>;
+      protocols: Array<{ protocolName: string; status: string }>;
+      evolutions: Array<{ description: string }>;
+    };
+    expect(detail.status).toBe(200);
+    expect(detailData.anamneses[0].answers[0].answer).toBe("Resposta fictícia.");
+    expect(detailData.diagnoses).toContainEqual(expect.objectContaining({ id: diagnosisId }));
+    expect(detailData.protocols).toContainEqual(expect.objectContaining({ protocolName: "Protocolo do atendimento" }));
+    expect(detailData.evolutions).toContainEqual(expect.objectContaining({ description: "Evolução fictícia para teste." }));
+
+    const patientRead = await fetch(`${baseUrl}/api/v1/encounters/${appointmentId}`, { headers: { cookie: patientCookie } });
+    expect(patientRead.status).toBe(200);
+    const patientWrite = await fetch(`${baseUrl}/api/v1/encounters/${appointmentId}/diagnoses`, {
+      method: "POST",
+      headers: { cookie: patientCookie, "content-type": "application/json" },
+      body: JSON.stringify({ description: "Não permitido", diagnosedAt: new Date().toISOString().slice(0, 10) }),
+    });
+    expect(patientWrite.status).toBe(403);
+
+    const finish = await fetch(`${baseUrl}/api/v1/encounters/${appointmentId}/finish`, {
+      method: "POST",
+      headers: { cookie: therapistCookie },
+    });
+    expect(finish.status).toBe(200);
+    expect(db.prepare("SELECT status FROM ATENDIMENTO WHERE id = ?").get(started.attendance.id)).toEqual({ status: "COMPLETED" });
+  });
+
   it("creates patient profiles with workbook identifiers", async () => {
     const cookie = await login("terapeuta@qiconect.local", "Terapeuta123!");
     const response = await fetch(`${baseUrl}/api/v1/patients`, {
@@ -402,7 +544,8 @@ describe("QIConect API MVP", () => {
     const patient = db
       .prepare(
         `SELECT p.id, p.usuario_id AS userId, p.clinica_id AS clinicId, p.ativo,
-                m.user_id AS expectedUserId, m.clinic_id AS expectedClinicId
+                m.user_id AS expectedUserId, m.clinic_id AS expectedClinicId,
+                p.terapeuta_id AS therapistId
          FROM PACIENTE p JOIN memberships m ON m.id = p.membership_id
          WHERE p.membership_id = ?`,
       )
@@ -413,10 +556,14 @@ describe("QIConect API MVP", () => {
       ativo: number;
       expectedUserId: string;
       expectedClinicId: string;
+      therapistId: string;
     };
     expect(patient.id).toBeTruthy();
     expect(patient.userId).toBe(patient.expectedUserId);
     expect(patient.clinicId).toBe(patient.expectedClinicId);
+    expect(patient.therapistId).toBe(
+      (db.prepare("SELECT id FROM TERAPEUTA WHERE membership_id = (SELECT id FROM memberships WHERE user_id = (SELECT id FROM USUARIO WHERE email = ?))").get("terapeuta@qiconect.local") as { id: string }).id,
+    );
     expect(patient.ativo).toBe(1);
   });
 

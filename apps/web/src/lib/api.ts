@@ -48,6 +48,7 @@ export interface Patient {
   phone: string | null;
   birthDate: string | null;
   cpf?: string | null;
+  lastAppointmentAt?: string | null;
 }
 
 export interface Therapist {
@@ -78,6 +79,7 @@ export interface Appointment {
   therapyName: string;
   patientName: string;
   therapistName: string;
+  rescheduledAt: string | null;
 }
 
 export interface ClinicalRecord {
@@ -90,4 +92,91 @@ export interface ClinicalRecord {
   releasedAt: string | null;
   createdAt: string;
   authorName: string;
+}
+
+export interface EncounterSummary {
+  appointmentId: string;
+  encounterId: string | null;
+  attendanceStatus: "ACTIVE" | "COMPLETED" | "CANCELLED" | null;
+  patientMembershipId: string;
+  therapistMembershipId: string;
+  therapyId: string;
+  startsAt: string;
+  endsAt: string;
+  appointmentStatus: Appointment["status"];
+  therapyName: string;
+  patientName: string;
+  therapistName: string;
+}
+
+export interface EncounterDetails {
+  appointment: Omit<EncounterSummary, "encounterId" | "attendanceStatus">;
+  attendance: {
+    id: string;
+    chartId: string;
+    attendedAt: string;
+    status: "ACTIVE" | "COMPLETED" | "CANCELLED";
+    notes: string | null;
+    createdAt: string;
+  } | null;
+  questions: Array<{ id: string; description: string }>;
+  anamneses: Array<{
+    id: string;
+    type: string;
+    description: string;
+    registeredAt: string;
+    answers: Array<{ questionId: string; question: string; answer: string }>;
+  }>;
+  diagnoses: Array<{ id: string; description: string; diagnosedAt: string }>;
+  protocols: Array<{
+    diagnosisProtocolId: string;
+    diagnosisId: string;
+    diagnosisDescription: string;
+    protocolId: string;
+    protocolName: string;
+    stepId: string;
+    sequence: number;
+    stepDescription: string;
+    startsAt: string | null;
+    endsAt: string | null;
+    stepNotes: string | null;
+    startedAt: string;
+    status: "PLANNED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
+    notes: string | null;
+  }>;
+  protocolOptions: Array<{
+    id: string;
+    name: string;
+    description: string | null;
+    objective: string | null;
+    steps: Array<{
+      id: string;
+      sequence: number;
+      startsAt: string | null;
+      endsAt: string | null;
+      description: string;
+      notes: string | null;
+    }>;
+  }>;
+  evolutions: Array<{
+    id: string;
+    diagnosisProtocolId: string;
+    description: string;
+    evolvedAt: string;
+    status: "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
+    sequence: number;
+    stepDescription: string;
+    protocolName: string;
+    authorName: string;
+  }>;
+  attachments: Array<{
+    id: string;
+    type: "EXAM" | "TONGUE_PHOTO";
+    originalFilename: string;
+    contentType: string;
+    sizeBytes: number;
+    description: string | null;
+    uploadedAt: string;
+    url: string;
+  }>;
 }

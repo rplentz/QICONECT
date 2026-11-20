@@ -3,15 +3,44 @@ import { apiRequest, type Patient, type Session } from "../../lib/api.js";
 
 interface PatientsPageProps {
   session: Session;
+  onOpenEncounters: (patientMembershipId: string) => void;
 }
 
 const emptyForm = { fullName: "", email: "", phone: "", password: "", birthDate: "", cpf: "" };
+const emptyUpdateForm = { fullName: "", email: "", phone: "", birthDate: "", cpf: "" };
 
-export function PatientsPage({ session }: PatientsPageProps) {
+function digitsOnly(value: string) {
+  return value.replace(/\D/g, "");
+}
+
+function formatCpf(value: string) {
+  const digits = digitsOnly(value).slice(0, 11);
+  return digits
+    .replace(/(\d{3})(\d)/, "$1.$2")
+    .replace(/(\d{3})(\d)/, "$1.$2")
+    .replace(/(\d{3})(\d{1,2})$/, "$1-$2");
+}
+
+function formatPhone(value: string) {
+  let digits = digitsOnly(value);
+  if (digits.startsWith("55") && digits.length > 11) digits = digits.slice(2);
+  digits = digits.slice(0, 11);
+  if (digits.length <= 2) return digits ? `(${digits}` : "";
+  if (digits.length <= 6) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+  if (digits.length <= 10) return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+}
+
+function displayPhone(value: string | null | undefined) {
+  return value ? formatPhone(value) : "—";
+}
+
+export function PatientsPage({ session, onOpenEncounters }: PatientsPageProps) {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [search, setSearch] = useState("");
   const [form, setForm] = useState(emptyForm);
   const [showForm, setShowForm] = useState(false);
+  const [updateForm, setUpdateForm] = useState(emptyUpdateForm);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const canManage = session.activeClinic.role !== "PATIENT";
@@ -35,9 +64,9 @@ export function PatientsPage({ session }: PatientsPageProps) {
         method: "POST",
         body: JSON.stringify({
           ...form,
-          phone: form.phone || undefined,
+          phone: digitsOnly(form.phone) || undefined,
           birthDate: form.birthDate || undefined,
-          cpf: form.cpf || undefined,
+          cpf: digitsOnly(form.cpf) || undefined,
         }),
       });
       setForm(emptyForm);
@@ -46,6 +75,28 @@ export function PatientsPage({ session }: PatientsPageProps) {
       await loadPatients();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Não foi possível cadastrar o paciente.");
+    }
+  }
+
+  async function submitUpdateRequest(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setSuccess("");
+    try {
+      await apiRequest("/patients/update-requests", {
+        method: "POST",
+        body: JSON.stringify({
+          fullName: updateForm.fullName || undefined,
+          email: updateForm.email || undefined,
+          phone: digitsOnly(updateForm.phone) || undefined,
+          birthDate: updateForm.birthDate || undefined,
+          cpf: digitsOnly(updateForm.cpf) || undefined,
+        }),
+      });
+      setUpdateForm(emptyUpdateForm);
+      setSuccess("Solicitação enviada ao terapeuta para avaliação.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Não foi possível enviar a solicitação.");
     }
   }
 
@@ -65,22 +116,43 @@ export function PatientsPage({ session }: PatientsPageProps) {
       </div>
       {error && <p className="alert alert-error">{error}</p>}
       {success && <p className="alert alert-success">{success}</p>}
-      {showForm && (
+      {!canManage && patients[0] ? (
+        <section className="panel profile-update-panel">
+          <div className="panel-heading">
+            <div>
+              <h2>Atualização cadastral</h2>
+              <p className="muted">Confira seus dados e informe ao terapeuta o que precisa ser alterado.</p>
+            </div>
+          </div>
+          <form onSubmit={submitUpdateRequest}>
+            <p className="field-hint">Os dados atuais são somente leitura. Preencha apenas os campos que deseja solicitar.</p>
+            <div className="profile-update-grid">
+              <div className="profile-update-heading"><strong>Dados atuais</strong><strong>Nova informação</strong></div>
+              <div className="profile-update-row"><label>Nome completo<input readOnly value={patients[0].fullName} /></label><label>Nome completo<input value={updateForm.fullName} onChange={(event) => setUpdateForm({ ...updateForm, fullName: event.target.value })} placeholder="Informe o novo nome" /></label></div>
+              <div className="profile-update-row"><label>E-mail<input readOnly value={patients[0].email} /></label><label>E-mail<input type="email" value={updateForm.email} onChange={(event) => setUpdateForm({ ...updateForm, email: event.target.value })} placeholder="Informe o novo e-mail" /></label></div>
+              <div className="profile-update-row"><label>Telefone<input readOnly value={displayPhone(patients[0].phone)} /></label><label>Telefone<input type="tel" inputMode="tel" maxLength={15} value={updateForm.phone} onChange={(event) => setUpdateForm({ ...updateForm, phone: formatPhone(event.target.value) })} placeholder="(48) 99999-9999" /></label></div>
+              <div className="profile-update-row"><label>CPF<input readOnly value={patients[0].cpf ? formatCpf(patients[0].cpf) : ""} /></label><label>CPF<input inputMode="numeric" maxLength={14} value={updateForm.cpf} onChange={(event) => setUpdateForm({ ...updateForm, cpf: formatCpf(event.target.value) })} placeholder="000.000.000-00" /></label></div>
+              <div className="profile-update-row"><label>Data de nascimento<input readOnly value={patients[0].birthDate ? new Intl.DateTimeFormat("pt-BR").format(new Date(`${patients[0].birthDate}T12:00:00`)) : ""} /></label><label>Data de nascimento<input type="date" value={updateForm.birthDate} onChange={(event) => setUpdateForm({ ...updateForm, birthDate: event.target.value })} /></label></div>
+            </div>
+            <div className="encounter-form-actions"><button className="button button-primary">Solicitar atualização cadastral</button></div>
+          </form>
+        </section>
+      ) : canManage && showForm ? (
         <form className="panel form-panel" onSubmit={submit}>
           <h2>Novo paciente</h2>
           <p className="muted">A conta será vinculada somente a esta clínica. Compartilhe a senha inicial com segurança.</p>
           <div className="form-grid">
             <label>Nome completo<input required minLength={2} value={form.fullName} onChange={(event) => setForm({ ...form, fullName: event.target.value })} /></label>
             <label>E-mail<input required type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} /></label>
-            <label>Telefone<input type="tel" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} /></label>
+            <label>Telefone<input type="tel" inputMode="tel" maxLength={15} placeholder="(48) 99999-9999" value={form.phone} onChange={(event) => setForm({ ...form, phone: formatPhone(event.target.value) })} /></label>
             <label>Nascimento<input type="date" value={form.birthDate} onChange={(event) => setForm({ ...form, birthDate: event.target.value })} /></label>
-            <label>CPF<input value={form.cpf} onChange={(event) => setForm({ ...form, cpf: event.target.value })} /></label>
+            <label>CPF<input inputMode="numeric" maxLength={14} placeholder="000.000.000-00" value={form.cpf} onChange={(event) => setForm({ ...form, cpf: formatCpf(event.target.value) })} /></label>
             <label>Senha inicial<input required type="password" minLength={10} value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} /></label>
           </div>
           <button className="button button-primary">Salvar paciente</button>
         </form>
-      )}
-      <section className="panel">
+      ) : null}
+      {canManage && <section className="panel">
         <div className="panel-heading">
           <div><h2>{patients.length} {patients.length === 1 ? "paciente" : "pacientes"}</h2><p className="muted">Cadastros ativos desta clínica.</p></div>
           {canManage && <input className="search-input" placeholder="Buscar paciente..." value={search} onChange={(event) => { setSearch(event.target.value); loadPatients(event.target.value).catch((reason: Error) => setError(reason.message)); }} />}
@@ -90,20 +162,20 @@ export function PatientsPage({ session }: PatientsPageProps) {
         ) : (
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Paciente</th><th>E-mail</th><th>Telefone</th><th>Nascimento</th></tr></thead>
+              <thead><tr><th>Paciente</th><th>E-mail</th><th>Telefone</th><th>Último atendimento</th></tr></thead>
               <tbody>
                 {patients.map((patient) => (
                   <tr key={patient.membershipId}>
                     <td><span className="person-cell"><span className="avatar">{patient.fullName.charAt(0)}</span><strong>{patient.fullName}</strong></span></td>
-                    <td>{patient.email}</td><td>{patient.phone || "—"}</td>
-                    <td>{patient.birthDate ? new Intl.DateTimeFormat("pt-BR").format(new Date(`${patient.birthDate}T12:00:00`)) : "—"}</td>
+                    <td>{patient.email}</td><td>{displayPhone(patient.phone)}</td>
+                    <td>{patient.lastAppointmentAt ? <button className="patient-attendance-link" onClick={() => onOpenEncounters(patient.membershipId)}>{new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(patient.lastAppointmentAt))}</button> : <span className="muted">Nenhum atendimento</span>}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
-      </section>
+      </section>}
     </div>
   );
 }

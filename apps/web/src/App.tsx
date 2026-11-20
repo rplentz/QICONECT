@@ -6,10 +6,12 @@ import { PatientsPage } from "./features/patients/PatientsPage.js";
 import { RecordsPage } from "./features/records/RecordsPage.js";
 import { RegistrationPage, type RegistrationId } from "./features/registrations/RegistrationPage.js";
 import { SettingsPage } from "./features/settings/SettingsPage.js";
+import { EncountersPage } from "./features/encounters/EncountersPage.js";
+import { EncounterDetailPage } from "./features/encounters/EncounterDetailPage.js";
 import { apiRequest, type Session } from "./lib/api.js";
 import logoImage from "../../../Documentacao/Logo3.png";
 
-type Page = "dashboard" | "appointments" | "patients" | "records" | "settings" | `registration:${RegistrationId}`;
+type Page = "dashboard" | "appointments" | "encounters" | "patients" | "records" | "settings" | `registration:${RegistrationId}` | `encounter:${string}`;
 
 const registrations: Array<{
   id: RegistrationId;
@@ -33,7 +35,8 @@ const registrations: Array<{
 const navigation: Array<{ id: Page; label: string; icon: string; roles?: Session["activeClinic"]["role"][] }> = [
   { id: "dashboard", label: "Visão geral", icon: "⌂" },
   { id: "appointments", label: "Agenda", icon: "◷", roles: ["THERAPIST", "PATIENT"] },
-  { id: "patients", label: "Pacientes", icon: "♡", roles: ["THERAPIST"] },
+  { id: "encounters", label: "Atendimentos", icon: "◉", roles: ["THERAPIST", "PATIENT"] },
+  { id: "patients", label: "Cadastro", icon: "♡", roles: ["THERAPIST", "PATIENT"] },
   { id: "records", label: "Prontuário", icon: "▤", roles: ["THERAPIST", "PATIENT"] },
   { id: "settings", label: "Configurações", icon: "⚙", roles: ["CLINIC_ADMIN", "THERAPIST"] },
 ];
@@ -47,6 +50,7 @@ const roleLabels = {
 export function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [page, setPage] = useState<Page>("dashboard");
+  const [encounterPatientId, setEncounterPatientId] = useState<string | undefined>();
   const [registrationsExpanded, setRegistrationsExpanded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -105,7 +109,8 @@ export function App() {
   }
 
   const activeRegistration = registrations.find((item) => page === `registration:${item.id}`);
-  const pageLabel = activeRegistration?.label ?? navigation.find((item) => item.id === page)?.label ?? "Visão geral";
+  const activeEncounterId = page.startsWith("encounter:") ? page.slice("encounter:".length) : null;
+  const pageLabel = activeRegistration?.label ?? (activeEncounterId ? "Atendimento" : navigation.find((item) => item.id === page)?.label ?? "Visão geral");
 
   return (
     <div className="app-shell">
@@ -123,7 +128,7 @@ export function App() {
         <span className="nav-section-label">MENU PRINCIPAL</span>
         <nav className="main-nav" aria-label="Navegação principal">
           {navigation.filter((item) => !item.roles || item.roles.includes(session.activeClinic.role)).map((item) => (
-            <button className={`nav-item ${page === item.id ? "nav-item-active" : ""}`} key={item.id} aria-label={item.label} aria-current={page === item.id ? "page" : undefined} onClick={() => setPage(item.id)}>
+              <button className={`nav-item ${page === item.id ? "nav-item-active" : ""}`} key={item.id} aria-label={item.label} aria-current={page === item.id ? "page" : undefined} onClick={() => { setEncounterPatientId(undefined); setPage(item.id); }}>
               <span className="nav-icon" aria-hidden="true">{item.icon}</span>
               <span>{item.label}</span>
               {page === item.id && <span className="nav-indicator" />}
@@ -193,7 +198,9 @@ export function App() {
           {error && <div className="alert alert-error global-alert">{error}<button onClick={() => setError("")}>Fechar</button></div>}
           {page === "dashboard" && <DashboardPage session={session} />}
           {page === "appointments" && <AppointmentsPage session={session} />}
-          {page === "patients" && <PatientsPage session={session} />}
+          {page === "encounters" && <EncountersPage session={session} patientMembershipId={encounterPatientId} onOpen={(appointmentId) => setPage(`encounter:${appointmentId}`)} />}
+          {activeEncounterId && <EncounterDetailPage key={activeEncounterId} appointmentId={activeEncounterId} session={session} onBack={() => setPage("encounters")} />}
+          {page === "patients" && <PatientsPage session={session} onOpenEncounters={(patientMembershipId) => { setEncounterPatientId(patientMembershipId); setPage("encounters"); }} />}
           {page === "records" && <RecordsPage session={session} />}
           {page === "settings" && session.activeClinic.role !== "PATIENT" && <SettingsPage session={session} />}
           {activeRegistration && <RegistrationPage resource={activeRegistration.id} session={session} />}
