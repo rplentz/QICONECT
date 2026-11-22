@@ -38,11 +38,11 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
 export interface Session {
   user: { id: string; email: string; fullName: string };
   activeClinic: { id: string; name: string; timezone: string; role: "CLINIC_ADMIN" | "THERAPIST" | "PATIENT" };
-  clinics: Array<{ membershipId: string; role: string; clinicId: string; clinicName: string }>;
+  clinics: Array<{ userClinicId: string; role: string; clinicId: string; clinicName: string }>;
 }
 
 export interface Patient {
-  membershipId: string;
+  id: string;
   fullName: string;
   email: string;
   phone: string | null;
@@ -52,10 +52,9 @@ export interface Patient {
 }
 
 export interface Therapist {
-  membershipId: string;
+  id: string;
   fullName: string;
   email: string;
-  phone: string | null;
   professionalRegistration: string | null;
 }
 
@@ -65,17 +64,16 @@ export interface Therapy {
   specialtyId: string;
   specialtyName: string;
   durationMinutes: number;
-  price: number | null;
 }
 
 export interface Appointment {
   id: string;
-  patientMembershipId: string;
-  therapistMembershipId: string;
+  patientId: string;
+  therapistId: string;
   therapyId: string;
   startsAt: string;
   endsAt: string;
-  status: "CONFIRMED" | "CANCELLED" | "COMPLETED" | "NO_SHOW";
+  status: "ACTIVE" | "INACTIVE" | "CONFIRMED" | "CANCELLED" | "RESCHEDULED" | "WAITING" | "IN_PROGRESS" | "PAID";
   therapyName: string;
   patientName: string;
   therapistName: string;
@@ -84,12 +82,11 @@ export interface Appointment {
 
 export interface ClinicalRecord {
   id: string;
-  patientMembershipId?: string;
+  patientId?: string;
   patientName?: string;
   type: "ANAMNESIS" | "DIAGNOSIS" | "PROTOCOL" | "EVOLUTION";
   title: string;
   content: Record<string, unknown>;
-  releasedAt: string | null;
   createdAt: string;
   authorName: string;
 }
@@ -97,9 +94,9 @@ export interface ClinicalRecord {
 export interface EncounterSummary {
   appointmentId: string;
   encounterId: string | null;
-  attendanceStatus: "ACTIVE" | "COMPLETED" | "CANCELLED" | null;
-  patientMembershipId: string;
-  therapistMembershipId: string;
+  attendanceStatus: Appointment["status"] | null;
+  patientId: string;
+  therapistId: string;
   therapyId: string;
   startsAt: string;
   endsAt: string;
@@ -115,7 +112,7 @@ export interface EncounterDetails {
     id: string;
     chartId: string;
     attendedAt: string;
-    status: "ACTIVE" | "COMPLETED" | "CANCELLED";
+    status: "IN_PROGRESS";
     notes: string | null;
     createdAt: string;
   } | null;
@@ -141,7 +138,7 @@ export interface EncounterDetails {
     endsAt: string | null;
     stepNotes: string | null;
     startedAt: string;
-    status: "PLANNED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
+    status: Appointment["status"];
     notes: string | null;
   }>;
   protocolOptions: Array<{
@@ -163,7 +160,7 @@ export interface EncounterDetails {
     diagnosisProtocolId: string;
     description: string;
     evolvedAt: string;
-    status: "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
+    status: Appointment["status"];
     sequence: number;
     stepDescription: string;
     protocolName: string;

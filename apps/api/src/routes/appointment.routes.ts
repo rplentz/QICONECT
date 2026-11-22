@@ -1,408 +1,113 @@
-import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { canPatientCancelAppointment } from "@qiconect/contracts";
 import { z } from "zod";
 import { db } from "../db/database.js";
 import { getAuth, requireAuth, requireRole } from "../middleware/auth.js";
 import { queueAppointmentNotice, queueCancellationNotice } from "../services/notifications.js";
-import { writeAudit } from "../services/audit.js";
 import { HttpError } from "../utils/http-error.js";
 
-export const appointmentRouter = Router();
-
-const appointmentSelection = `
-  SELECT a.id, a.patient_membership_id AS patientMembershipId,
-         a.therapist_membership_id AS therapistMembershipId, a.terapia_id AS therapyId,
-         a.dt_inicio AS startsAt, a.dt_fim AS endsAt, a.status,
-         a.cancellation_reason AS cancellationReason, t.nome AS therapyName,
-         patientUser.nome AS patientName, therapistUser.nome AS therapistName,
-         (SELECT MAX(event.created_at) FROM appointment_events event
-          WHERE event.appointment_id = a.id AND event.action = 'RESCHEDULED') AS rescheduledAt
-  FROM AGENDA a
-  JOIN TERAPIA t ON t.id = a.terapia_id AND t.clinic_id = a.clinic_id
-  JOIN memberships patientMembership ON patientMembership.id = a.patient_membership_id
-  JOIN USUARIO patientUser ON patientUser.id = patientMembership.user_id
-  JOIN memberships therapistMembership ON therapistMembership.id = a.therapist_membership_id
-  JOIN USUARIO therapistUser ON therapistUser.id = therapistMembership.user_id
-`;
-
-function getLocalTime(date: Date, timezone: string): { weekday: number; time: string } {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: timezone,
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(date);
-  const weekdayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const weekdayLabel = parts.find((part) => part.type === "weekday")?.value;
-  const hour = parts.find((part) => part.type === "hour")?.value;
-  const minute = parts.find((part) => part.type === "minute")?.value;
-  const weekday = weekdayNames.indexOf(weekdayLabel ?? "");
-  if (weekday < 0 || !hour || !minute) throw new HttpError(400, "INVALID_DATE", "Não foi possível interpretar o horário.");
-  return { weekday, time: `${hour}:${minute}` };
+export const appointmentRouter=Router();
+const statusName=(id:number)=>({1:"ACTIVE",2:"INACTIVE",3:"CONFIRMED",4:"CANCELLED",5:"RESCHEDULED",6:"WAITING",7:"IN_PROGRESS",8:"PAID"} as Record<number,string>)[id]??"WAITING";
+const select=`SELECT a.id,CAST(a.paciente_id AS TEXT) AS patientId,CAST(a.terapeuta_id AS TEXT) AS therapistId,
+  CAST(a.terapia_id AS TEXT) AS therapyId,a.dt_inicio AS startsAt,a.dt_fim AS endsAt,s.nome AS statusName,a.status,
+  a.paciente_id,a.terapeuta_id,a.terapia_id,
+  t.nome AS therapyName,pu.nome AS patientName,tu.nome AS therapistName
+  FROM AGENDA a JOIN STATUS s ON s.id=a.status JOIN TERAPIA t ON t.id=a.terapia_id
+  JOIN PACIENTE p ON p.id=a.paciente_id JOIN USUARIO pu ON pu.id=p.usuario_id
+  JOIN TERAPEUTA tr ON tr.id=a.terapeuta_id JOIN USUARIO tu ON tu.id=tr.usuario_id`;
+function rowsForClinic(clinicId:number,role:string,userId:number){
+  const patient=role==="PATIENT"?db.prepare("SELECT id FROM PACIENTE WHERE usuario_id=? AND clinica_id=?").get(userId,clinicId) as {id:number}|undefined:undefined;
+  const therapist=role==="THERAPIST"?db.prepare("SELECT id FROM TERAPEUTA WHERE usuario_id=?").get(userId) as {id:number}|undefined:undefined;
+  return db.prepare(`${select} WHERE p.clinica_id=? AND (? IS NULL OR a.paciente_id=?) AND (? IS NULL OR a.terapeuta_id=?) ORDER BY a.dt_inicio`)
+    .all(clinicId,patient?.id??null,patient?.id??null,therapist?.id??null,therapist?.id??null) as Array<Record<string,any>>;
 }
-
-function ensureAppointmentAvailability(
-  auth: ReturnType<typeof getAuth>,
-  therapistMembershipId: string,
-  startsAt: Date,
-  endsAt: Date,
-): void {
-  const start = getLocalTime(startsAt, auth.clinicTimezone);
-  const end = getLocalTime(endsAt, auth.clinicTimezone);
-  if (start.weekday !== end.weekday || start.time >= end.time) {
-    throw new HttpError(400, "INVALID_SLOT", "O atendimento deve começar e terminar no mesmo dia.");
-  }
-
-  const rule = db
-    .prepare(
-      `SELECT id FROM availability_rules
-       WHERE clinic_id = ? AND therapist_membership_id = ? AND weekday = ? AND active = 1
-         AND starts_at <= ? AND ends_at >= ? LIMIT 1`,
-    )
-    .get(auth.clinicId, therapistMembershipId, start.weekday, start.time, end.time);
-  if (!rule) throw new HttpError(409, "OUTSIDE_AVAILABILITY", "Este horário está fora da disponibilidade do terapeuta.");
-
-  const block = db
-    .prepare(
-      `SELECT id FROM schedule_blocks
-       WHERE clinic_id = ? AND therapist_membership_id = ? AND starts_at < ? AND ends_at > ? LIMIT 1`,
-    )
-    .get(auth.clinicId, therapistMembershipId, endsAt.toISOString(), startsAt.toISOString());
-  if (block) throw new HttpError(409, "SCHEDULE_BLOCKED", "O terapeuta não está disponível neste horário.");
+function mapAppointment(row:Record<string,any>){return {...row,id:String(row.id),status:statusName(row.status),rescheduledAt:row.status===5?row.startsAt:null};}
+function ensureAvailability(therapistId:number,start:Date,end:Date,clinicId:number){
+  const localStart=new Date(start.toLocaleString("en-US",{timeZone:"America/Sao_Paulo"}));
+  const localEnd=new Date(end.toLocaleString("en-US",{timeZone:"America/Sao_Paulo"}));
+  if(localStart.toDateString()!==localEnd.toDateString()) throw new HttpError(400,"INVALID_SLOT","O atendimento deve ocorrer no mesmo dia.");
+  const therapist=db.prepare("SELECT usuario_id FROM TERAPEUTA WHERE id=?").get(therapistId) as {usuario_id:number}|undefined;
+  if(!therapist) throw new HttpError(404,"THERAPIST_NOT_FOUND","Terapeuta não encontrado.");
+  const weekday=localStart.getDay();const fmt=(d:Date)=>`${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+  const ok=db.prepare(`SELECT 1 FROM TERAPEUTA_DISPONIBILIDADE WHERE usuario_id=? AND clinica_id=? AND dia_semana=? AND hr_ini<=? AND hr_fim>=? LIMIT 1`)
+    .get(therapist.usuario_id,clinicId,weekday,fmt(localStart),fmt(localEnd));
+  if(!ok) throw new HttpError(409,"OUTSIDE_AVAILABILITY","Este horário está fora da disponibilidade do terapeuta.");
 }
-
-function ensureNoConflict(
-  clinicId: string,
-  therapistMembershipId: string,
-  patientMembershipId: string,
-  startsAt: Date,
-  endsAt: Date,
-  excludingAppointmentId?: string,
-): void {
-  const conflict = db
-    .prepare(
-      `SELECT id FROM AGENDA
-       WHERE clinic_id = ? AND status = 'CONFIRMED' AND dt_inicio < ? AND dt_fim > ?
-         AND (therapist_membership_id = ? OR patient_membership_id = ?)
-         AND (? IS NULL OR id <> ?) LIMIT 1`,
-    )
-    .get(
-      clinicId,
-      endsAt.toISOString(),
-      startsAt.toISOString(),
-      therapistMembershipId,
-      patientMembershipId,
-      excludingAppointmentId ?? null,
-      excludingAppointmentId ?? null,
-    );
-  if (conflict) throw new HttpError(409, "SLOT_TAKEN", "Este horário não está mais disponível.");
+function ensureNoConflict(clinicId:number,patientId:number,therapistId:number,start:string,end:string,excluding?:number){
+  const conflict=db.prepare(`SELECT 1 FROM AGENDA a JOIN PACIENTE p ON p.id=a.paciente_id
+    WHERE p.clinica_id=? AND a.status<>4 AND a.dt_inicio<? AND a.dt_fim>? AND (a.terapeuta_id=? OR a.paciente_id=?) AND (? IS NULL OR a.id<>?) LIMIT 1`)
+    .get(clinicId,end,start,therapistId,patientId,excluding??null,excluding??null);
+  if(conflict) throw new HttpError(409,"SLOT_TAKEN","Este horário não está mais disponível.");
 }
-
-appointmentRouter.get("/appointments", requireAuth, (request, response) => {
-  const auth = getAuth(request);
-  const from = z.string().datetime({ offset: true }).optional().parse(request.query.from);
-  const to = z.string().datetime({ offset: true }).optional().parse(request.query.to);
-  const roleFilter =
-    auth.role === "PATIENT"
-      ? " AND a.patient_membership_id = ?"
-      : auth.role === "THERAPIST"
-        ? " AND a.therapist_membership_id = ?"
-        : "";
-  const parameters = [auth.clinicId, ...(from ? [new Date(from).toISOString()] : []), ...(to ? [new Date(to).toISOString()] : [])];
-  if (auth.role !== "CLINIC_ADMIN") parameters.push(auth.membershipId);
-  const dates = `${from ? " AND a.dt_inicio >= ?" : ""}${to ? " AND a.dt_inicio < ?" : ""}`;
-  const appointments = db
-    .prepare(
-      `${appointmentSelection}
-       WHERE a.clinic_id = ?${dates}${roleFilter}
-       ORDER BY a.dt_inicio DESC LIMIT 200`,
-    )
-    .all(...parameters);
-  response.json({ appointments });
+appointmentRouter.get("/appointments",requireAuth,(request,response)=>{
+  const auth=getAuth(request);response.json({appointments:rowsForClinic(Number(auth.clinicId),auth.role,Number(auth.userId)).map(mapAppointment)});
 });
-
-appointmentRouter.post("/appointments", requireAuth, (request, response, next) => {
-  try {
-    const input = z
-      .object({
-        patientMembershipId: z.string().uuid().optional(),
-        therapistMembershipId: z.string().uuid(),
-        therapyId: z.string().uuid(),
-        startsAt: z.string().datetime({ offset: true }),
-      })
-      .parse(request.body);
-    const auth = getAuth(request);
-    const patientMembershipId = auth.role === "PATIENT" ? auth.membershipId : input.patientMembershipId;
-    if (!patientMembershipId) throw new HttpError(400, "PATIENT_REQUIRED", "Selecione o paciente.");
-
-    const patient = db
-      .prepare(
-        `SELECT m.id, u.email, u.telefone AS phone FROM memberships m
-         JOIN USUARIO u ON u.id = m.user_id
-         WHERE m.id = ? AND m.clinic_id = ? AND m.role = 'PATIENT' AND m.status = 'ACTIVE' AND u.ativo = 1`,
-      )
-      .get(patientMembershipId, auth.clinicId);
-    if (!patient) throw new HttpError(404, "PATIENT_NOT_FOUND", "Paciente não encontrado nesta clínica.");
-    if (auth.role === "PATIENT" && auth.membershipId !== patientMembershipId) {
-      throw new HttpError(403, "FORBIDDEN", "Você só pode agendar para si.");
-    }
-
-    const therapist = db
-      .prepare(
-        `SELECT u.email, u.telefone AS phone FROM memberships m
-         JOIN USUARIO u ON u.id = m.user_id
-         WHERE m.id = ? AND m.clinic_id = ? AND m.role = 'THERAPIST' AND m.status = 'ACTIVE' AND u.ativo = 1`,
-      )
-      .get(input.therapistMembershipId, auth.clinicId) as { email: string; phone: string | null } | undefined;
-    if (!therapist) throw new HttpError(404, "THERAPIST_NOT_FOUND", "Terapeuta não encontrado nesta clínica.");
-
-    const therapy = db
-      .prepare("SELECT duracao_min AS durationMinutes FROM TERAPIA WHERE id = ? AND clinic_id = ? AND ativa = 1")
-      .get(input.therapyId, auth.clinicId) as { durationMinutes: number } | undefined;
-    if (!therapy) throw new HttpError(404, "THERAPY_NOT_FOUND", "Terapia não encontrada nesta clínica.");
-
-    const therapistCanProvide = db
-      .prepare("SELECT 1 FROM therapist_therapies WHERE clinic_id = ? AND membership_id = ? AND therapy_id = ?")
-      .get(auth.clinicId, input.therapistMembershipId, input.therapyId);
-    if (!therapistCanProvide) throw new HttpError(409, "THERAPY_NOT_AVAILABLE", "Este terapeuta não está habilitado para a terapia.");
-
-    const startsAt = new Date(input.startsAt);
-    if (startsAt.getTime() <= Date.now()) throw new HttpError(400, "INVALID_DATE", "O agendamento deve ser futuro.");
-    const endsAt = new Date(startsAt.getTime() + therapy.durationMinutes * 60_000);
-    ensureAppointmentAvailability(auth, input.therapistMembershipId, startsAt, endsAt);
-
-    const appointmentId = randomUUID();
-    const createdAt = new Date().toISOString();
-    const createAppointment = db.transaction(() => {
-      ensureNoConflict(
-        auth.clinicId,
-        input.therapistMembershipId,
-        patientMembershipId,
-        startsAt,
-        endsAt,
-      );
-
-      db.prepare(
-        `INSERT INTO AGENDA
-         (id, clinic_id, patient_membership_id, therapist_membership_id, terapia_id, dt_inicio, dt_fim, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'CONFIRMED', ?, ?)`,
-      ).run(
-        appointmentId,
-        auth.clinicId,
-        patientMembershipId,
-        input.therapistMembershipId,
-        input.therapyId,
-        startsAt.toISOString(),
-        endsAt.toISOString(),
-        createdAt,
-        createdAt,
-      );
-      db.prepare(
-        "INSERT INTO appointment_events (id, appointment_id, actor_user_id, action, created_at) VALUES (?, ?, ?, ?, ?)",
-      ).run(randomUUID(), appointmentId, auth.userId, "CREATED", createdAt);
-    });
-    createAppointment.immediate();
-    const patientContact = patient as { id: string; email: string; phone: string | null };
-    queueAppointmentNotice(
-      auth.clinicId,
-      [patientContact, therapist],
-      "APPOINTMENT_CONFIRMED",
-      appointmentId,
-    );
-    writeAudit(auth, "appointment.created", "appointment", appointmentId);
-    const created = db.prepare(`${appointmentSelection} WHERE a.id = ? AND a.clinic_id = ?`).get(appointmentId, auth.clinicId);
-    response.status(201).json({ appointment: created });
-  } catch (error) {
-    next(error);
-  }
+appointmentRouter.post("/appointments",requireAuth,(request,response,next)=>{
+  try{
+    const input=z.object({therapistId:z.coerce.number().positive(),therapyId:z.coerce.number().positive(),patientId:z.coerce.number().positive().optional(),startsAt:z.string().datetime({offset:true})}).parse(request.body);
+    const auth=getAuth(request);const patient=auth.role==="PATIENT"
+      ? db.prepare("SELECT id FROM PACIENTE WHERE usuario_id=? AND clinica_id=?").get(Number(auth.userId),Number(auth.clinicId)) as {id:number}|undefined
+      : db.prepare("SELECT id FROM PACIENTE WHERE id=? AND clinica_id=?").get(input.patientId,Number(auth.clinicId)) as {id:number}|undefined;
+    if(!patient) throw new HttpError(404,"PATIENT_NOT_FOUND","Paciente não encontrado nesta clínica.");
+    const therapist=db.prepare(`SELECT tr.id,tr.usuario_id FROM TERAPEUTA tr JOIN USUARIO_CLINICA uc ON uc.usuario_id=tr.usuario_id
+      WHERE tr.id=? AND uc.clinica_id=? AND uc.perfil_id=3 AND uc.status=1`).get(input.therapistId,Number(auth.clinicId)) as {id:number;usuario_id:number}|undefined;
+    if(!therapist) throw new HttpError(404,"THERAPIST_NOT_FOUND","Terapeuta não encontrado nesta clínica.");
+    const therapy=db.prepare("SELECT duracao_min FROM TERAPIA WHERE id=? AND status=1").get(input.therapyId) as {duracao_min:number}|undefined;
+    if(!therapy) throw new HttpError(404,"THERAPY_NOT_FOUND","Terapia não encontrada.");
+    const start=new Date(input.startsAt);const end=new Date(start.getTime()+therapy.duracao_min*60000);
+    ensureAvailability(therapist.id,start,end,Number(auth.clinicId));
+    ensureNoConflict(Number(auth.clinicId),patient.id,therapist.id,start.toISOString(),end.toISOString());
+    const id=db.prepare("INSERT INTO AGENDA(paciente_id,terapeuta_id,terapia_id,dt_inicio,dt_fim,status) VALUES(?,?,?,?,?,3)")
+      .run(patient.id,therapist.id,input.therapyId,start.toISOString(),end.toISOString()).lastInsertRowid;
+    const recipients=db.prepare(`SELECT u.email,p.telefone AS phone FROM PACIENTE p JOIN USUARIO u ON u.id=p.usuario_id WHERE p.id=?
+      UNION ALL SELECT u.email,NULL AS phone FROM TERAPEUTA t JOIN USUARIO u ON u.id=t.usuario_id WHERE t.id=?`).all(patient.id,therapist.id) as Array<{email:string;phone:string|null}>;
+    queueAppointmentNotice(auth.clinicId,recipients,"APPOINTMENT_CONFIRMED",String(id));
+    response.status(201).json({appointment:{id:String(id),startsAt:start.toISOString(),endsAt:end.toISOString(),status:"CONFIRMED"}});
+  }catch(e){next(e);}
 });
-
-appointmentRouter.post("/appointments/:id/reschedule", requireAuth, (request, response, next) => {
-  try {
-    const input = z.object({ startsAt: z.string().datetime({ offset: true }) }).parse(request.body);
-    const auth = getAuth(request);
-    const appointmentId = z.string().uuid().parse(request.params.id);
-    const appointment = db
-      .prepare(
-        `SELECT a.id, a.patient_membership_id AS patientMembershipId, a.therapist_membership_id AS therapistMembershipId,
-                a.terapia_id AS therapyId, a.dt_inicio AS startsAt, a.status,
-                t.duracao_min AS durationMinutes
-         FROM AGENDA a
-         JOIN TERAPIA t ON t.id = a.terapia_id AND t.clinic_id = a.clinic_id
-         WHERE a.id = ? AND a.clinic_id = ?`,
-      )
-      .get(appointmentId, auth.clinicId) as
-      | {
-          id: string;
-          patientMembershipId: string;
-          therapistMembershipId: string;
-          therapyId: string;
-          startsAt: string;
-          status: string;
-          durationMinutes: number;
-        }
-      | undefined;
-    if (!appointment) throw new HttpError(404, "APPOINTMENT_NOT_FOUND", "Agendamento não encontrado.");
-    if (appointment.status !== "CONFIRMED") throw new HttpError(409, "APPOINTMENT_NOT_ACTIVE", "Este agendamento não está ativo.");
-
-    const isPatient = auth.role === "PATIENT" && auth.membershipId === appointment.patientMembershipId;
-    const isTherapist = auth.role === "THERAPIST" && auth.membershipId === appointment.therapistMembershipId;
-    const isClinicAdmin = auth.role === "CLINIC_ADMIN";
-    if (!isPatient && !isTherapist && !isClinicAdmin) throw new HttpError(403, "FORBIDDEN", "Você não pode remarcar este agendamento.");
-    if (isPatient && !canPatientCancelAppointment(new Date(appointment.startsAt), new Date())) {
-      throw new HttpError(409, "CANCELLATION_WINDOW_CLOSED", "A remarcação pelo portal deve ocorrer até quatro horas antes.");
+appointmentRouter.post("/appointments/:id/cancel",requireAuth,(request,response,next)=>{
+  try{
+    const auth=getAuth(request);const id=z.coerce.number().positive().parse(request.params.id);
+    const row=db.prepare(`${select} WHERE a.id=? AND p.clinica_id=?`).get(id,Number(auth.clinicId)) as Record<string,any>|undefined;
+    if(!row) throw new HttpError(404,"APPOINTMENT_NOT_FOUND","Agendamento não encontrado.");
+    if(row.status===4) throw new HttpError(409,"ALREADY_CANCELLED","Este agendamento já foi cancelado.");
+    if(auth.role==="PATIENT"){
+      const patient=db.prepare("SELECT id FROM PACIENTE WHERE usuario_id=?").get(Number(auth.userId)) as {id:number}|undefined;
+      if(patient?.id!==row.paciente_id) throw new HttpError(403,"FORBIDDEN","Você só pode cancelar seus próprios agendamentos.");
+      if(!canPatientCancelAppointment(new Date(row.startsAt),new Date())) throw new HttpError(409,"CANCELLATION_WINDOW_CLOSED","O cancelamento pelo paciente deve ocorrer com pelo menos quatro horas de antecedência.");
     }
-
-    const startsAt = new Date(input.startsAt);
-    if (startsAt.getTime() <= Date.now()) throw new HttpError(400, "INVALID_DATE", "O novo horário deve ser futuro.");
-    const endsAt = new Date(startsAt.getTime() + appointment.durationMinutes * 60_000);
-    ensureAppointmentAvailability(auth, appointment.therapistMembershipId, startsAt, endsAt);
-
-    const therapist = db
-      .prepare(
-        `SELECT u.email, u.telefone AS phone FROM memberships m JOIN USUARIO u ON u.id = m.user_id
-         WHERE m.id = ? AND m.clinic_id = ? AND m.role = 'THERAPIST' AND m.status = 'ACTIVE'`,
-      )
-      .get(appointment.therapistMembershipId, auth.clinicId) as { email: string; phone: string | null };
-    const patient = db
-      .prepare(
-        `SELECT u.email, u.telefone AS phone FROM memberships m JOIN USUARIO u ON u.id = m.user_id
-         WHERE m.id = ? AND m.clinic_id = ? AND m.role = 'PATIENT' AND m.status = 'ACTIVE'`,
-      )
-      .get(appointment.patientMembershipId, auth.clinicId) as { email: string; phone: string | null };
-    const now = new Date().toISOString();
-    const reschedule = db.transaction(() => {
-      ensureNoConflict(
-        auth.clinicId,
-        appointment.therapistMembershipId,
-        appointment.patientMembershipId,
-        startsAt,
-        endsAt,
-        appointmentId,
-      );
-      db.prepare("UPDATE AGENDA SET dt_inicio = ?, dt_fim = ?, updated_at = ? WHERE id = ? AND status = 'CONFIRMED'").run(
-        startsAt.toISOString(),
-        endsAt.toISOString(),
-        now,
-        appointmentId,
-      );
-      db.prepare(
-        "INSERT INTO appointment_events (id, appointment_id, actor_user_id, action, details, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-      ).run(
-        randomUUID(),
-        appointmentId,
-        auth.userId,
-        "RESCHEDULED",
-        JSON.stringify({ from: appointment.startsAt, to: startsAt.toISOString() }),
-        now,
-      );
-    });
-    reschedule.immediate();
-    queueAppointmentNotice(auth.clinicId, [patient, therapist], "APPOINTMENT_RESCHEDULED", appointmentId);
-    writeAudit(auth, "appointment.rescheduled", "appointment", appointmentId);
-    const updated = db.prepare(`${appointmentSelection} WHERE a.id = ? AND a.clinic_id = ?`).get(appointmentId, auth.clinicId);
-    response.json({ appointment: updated, notifications: "NOT_CONFIGURED" });
-  } catch (error) {
-    next(error);
-  }
+    db.prepare("UPDATE AGENDA SET status=4 WHERE id=?").run(id);
+    const therapist=db.prepare("SELECT u.email,NULL AS phone FROM TERAPEUTA t JOIN USUARIO u ON u.id=t.usuario_id WHERE t.id=?").get(row.terapeuta_id) as {email:string;phone:null};
+    queueCancellationNotice(auth.clinicId,therapist,String(id));response.json({status:"CANCELLED",notifications:"NOT_CONFIGURED"});
+  }catch(e){next(e);}
 });
-
-appointmentRouter.post("/appointments/:id/cancel", requireAuth, (request, response, next) => {
-  try {
-    const input = z.object({ reason: z.string().trim().max(500).optional() }).parse(request.body ?? {});
-    const auth = getAuth(request);
-    const appointmentId = z.string().uuid().parse(request.params.id);
-    const appointment = db
-      .prepare(
-        `SELECT a.id, a.patient_membership_id AS patientMembershipId, a.therapist_membership_id AS therapistMembershipId,
-                a.dt_inicio AS startsAt, a.status, u.email AS therapistEmail, u.telefone AS therapistPhone
-         FROM AGENDA a
-         JOIN memberships m ON m.id = a.therapist_membership_id AND m.clinic_id = a.clinic_id
-         JOIN USUARIO u ON u.id = m.user_id
-         WHERE a.id = ? AND a.clinic_id = ?`,
-      )
-      .get(appointmentId, auth.clinicId) as
-      | {
-          id: string;
-          patientMembershipId: string;
-          therapistMembershipId: string;
-          startsAt: string;
-          status: string;
-          therapistEmail: string;
-          therapistPhone: string | null;
-        }
-      | undefined;
-    if (!appointment) throw new HttpError(404, "APPOINTMENT_NOT_FOUND", "Agendamento não encontrado.");
-    if (appointment.status !== "CONFIRMED") throw new HttpError(409, "APPOINTMENT_NOT_ACTIVE", "Este agendamento não está ativo.");
-
-    const isPatient = auth.role === "PATIENT" && auth.membershipId === appointment.patientMembershipId;
-    const isTherapist = auth.role === "THERAPIST" && auth.membershipId === appointment.therapistMembershipId;
-    const isClinicAdmin = auth.role === "CLINIC_ADMIN";
-    if (!isPatient && !isTherapist && !isClinicAdmin) throw new HttpError(403, "FORBIDDEN", "Você não pode cancelar este agendamento.");
-    if (isPatient && !canPatientCancelAppointment(new Date(appointment.startsAt), new Date())) {
-      throw new HttpError(409, "CANCELLATION_WINDOW_CLOSED", "O cancelamento pelo portal deve ocorrer até quatro horas antes.");
-    }
-    if (!isPatient && !input.reason) {
-      throw new HttpError(400, "REASON_REQUIRED", "Informe o motivo para o cancelamento administrativo ou do terapeuta.");
-    }
-
-    const now = new Date().toISOString();
-    const cancelAppointment = db.transaction(() => {
-      const result = db
-        .prepare(
-          `UPDATE AGENDA
-           SET status = 'CANCELLED', cancellation_reason = ?, cancelled_at = ?, cancelled_by_user_id = ?,
-               cancellation_channel = ?, updated_at = ?
-           WHERE id = ? AND clinic_id = ? AND status = 'CONFIRMED'`,
-        )
-        .run(
-          input.reason ?? null,
-          now,
-          auth.userId,
-          isPatient ? "PATIENT_PORTAL" : "CLINIC_STAFF",
-          now,
-          appointmentId,
-          auth.clinicId,
-        );
-      if (result.changes !== 1) throw new HttpError(409, "APPOINTMENT_NOT_ACTIVE", "Este agendamento já foi alterado.");
-      db.prepare(
-        "INSERT INTO appointment_events (id, appointment_id, actor_user_id, action, details, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-      ).run(randomUUID(), appointmentId, auth.userId, "CANCELLED", JSON.stringify({ reason: input.reason ?? null }), now);
-    });
-    cancelAppointment.immediate();
-    queueCancellationNotice(auth.clinicId, { email: appointment.therapistEmail, phone: appointment.therapistPhone }, appointmentId);
-    writeAudit(auth, "appointment.cancelled", "appointment", appointmentId, { reasonProvided: Boolean(input.reason) });
-    response.json({ status: "CANCELLED", notifications: "NOT_CONFIGURED" });
-  } catch (error) {
-    next(error);
-  }
+appointmentRouter.post("/appointments/:id/reschedule",requireAuth,(request,response,next)=>{
+  try{
+    const auth=getAuth(request);const id=z.coerce.number().positive().parse(request.params.id);
+    const start=z.string().datetime({offset:true}).parse(z.object({startsAt:z.string()}).parse(request.body).startsAt);
+    const old=db.prepare(`${select} WHERE a.id=? AND p.clinica_id=?`).get(id,Number(auth.clinicId)) as Record<string,any>|undefined;
+    if(!old) throw new HttpError(404,"APPOINTMENT_NOT_FOUND","Agendamento não encontrado.");
+    if(auth.role==="PATIENT" && Number(db.prepare("SELECT id FROM PACIENTE WHERE usuario_id=?").pluck().get(Number(auth.userId)))!==old.paciente_id) throw new HttpError(403,"FORBIDDEN","Você só pode remarcar seus próprios agendamentos.");
+    if(auth.role==="THERAPIST" && Number(db.prepare("SELECT id FROM TERAPEUTA WHERE usuario_id=?").pluck().get(Number(auth.userId)))!==old.terapeuta_id) throw new HttpError(403,"FORBIDDEN","Você só pode remarcar seus próprios atendimentos.");
+    const duration=db.prepare("SELECT duracao_min FROM TERAPIA WHERE id=?").get(old.terapia_id) as {duracao_min:number};
+    const startDate=new Date(start);const endDate=new Date(startDate.getTime()+duration.duracao_min*60000);
+    ensureAvailability(old.terapeuta_id,startDate,endDate,Number(auth.clinicId));ensureNoConflict(Number(auth.clinicId),old.paciente_id,old.terapeuta_id,startDate.toISOString(),endDate.toISOString(),id);
+    db.prepare("UPDATE AGENDA SET dt_inicio=?,dt_fim=?,status=5 WHERE id=?").run(startDate.toISOString(),endDate.toISOString(),id);
+    const recipients=db.prepare(`SELECT u.email,p.telefone AS phone FROM PACIENTE p JOIN USUARIO u ON u.id=p.usuario_id WHERE p.id=?
+      UNION ALL SELECT u.email,NULL AS phone FROM TERAPEUTA t JOIN USUARIO u ON u.id=t.usuario_id WHERE t.id=?`).all(old.paciente_id,old.terapeuta_id) as Array<{email:string;phone:string|null}>;
+    queueAppointmentNotice(auth.clinicId,recipients,"APPOINTMENT_RESCHEDULED",String(id));
+    response.json({notifications:"NOT_CONFIGURED"});
+  }catch(e){next(e);}
 });
-
-appointmentRouter.patch("/appointments/:id/status", requireAuth, requireRole("THERAPIST"), (request, response, next) => {
-  try {
-    const input = z.object({ status: z.enum(["COMPLETED", "NO_SHOW"]) }).parse(request.body);
-    const auth = getAuth(request);
-    const appointmentId = z.string().uuid().parse(request.params.id);
-    const now = new Date().toISOString();
-    const updateStatus = db.transaction(() => {
-      const update = db
-        .prepare(
-          "UPDATE AGENDA SET status = ?, updated_at = ? WHERE id = ? AND clinic_id = ? AND status = 'CONFIRMED' AND (? = 'CLINIC_ADMIN' OR therapist_membership_id = ?)",
-        )
-        .run(input.status, now, appointmentId, auth.clinicId, auth.role, auth.membershipId);
-      if (update.changes !== 1) {
-        throw new HttpError(404, "APPOINTMENT_NOT_FOUND", "Atendimento não encontrado ou não pode ser atualizado.");
-      }
-      db.prepare(
-        "INSERT INTO appointment_events (id, appointment_id, actor_user_id, action, created_at) VALUES (?, ?, ?, ?, ?)",
-      ).run(randomUUID(), appointmentId, auth.userId, input.status, now);
-    });
-    updateStatus.immediate();
-    writeAudit(auth, `appointment.${input.status.toLowerCase()}`, "appointment", appointmentId);
-    response.json({ id: appointmentId, status: input.status });
-  } catch (error) {
-    next(error);
-  }
+appointmentRouter.patch("/appointments/:id/status",requireAuth,requireRole("THERAPIST"),(request,response,next)=>{
+  try{const auth=getAuth(request);const id=z.coerce.number().positive().parse(request.params.id);const input=z.object({status:z.enum(["IN_PROGRESS"])}).parse(request.body);
+    const row=db.prepare(`${select} WHERE a.id=? AND p.clinica_id=?`).get(id,Number(auth.clinicId)) as Record<string,any>|undefined;
+    if(!row)throw new HttpError(404,"APPOINTMENT_NOT_FOUND","Agendamento não encontrado.");
+    if(Number(db.prepare("SELECT id FROM TERAPEUTA WHERE usuario_id=?").pluck().get(Number(auth.userId)))!==row.terapeuta_id) throw new HttpError(403,"FORBIDDEN","Você só pode iniciar seus próprios atendimentos.");
+    db.prepare("UPDATE AGENDA SET status=7 WHERE id=?").run(id);
+    const attendance=db.prepare("SELECT id FROM ATENDIMENTO WHERE paciente_id=? AND terapeuta_id=? AND terapia_id=? AND dt_atend=?").get(row.paciente_id,row.terapeuta_id,row.terapia_id,row.startsAt);
+    let attendanceId = attendance ? Number((attendance as {id:number}).id) : 0;
+    if(!attendanceId) attendanceId = Number(db.prepare("INSERT INTO ATENDIMENTO(paciente_id,terapeuta_id,terapia_id,dt_atend,status) VALUES(?,?,?,?,7)").run(row.paciente_id,row.terapeuta_id,row.terapia_id,row.startsAt).lastInsertRowid);
+    if(!db.prepare("SELECT id FROM PRONTUARIO WHERE atendimento_id=?").get(attendanceId)) db.prepare("INSERT INTO PRONTUARIO(paciente_id,atendimento_id,status) VALUES(?,?,1)").run(row.paciente_id,attendanceId);
+    response.json({status:input.status});}catch(e){next(e);}
 });

@@ -14,7 +14,7 @@ export function AppointmentsPage({ session }: AppointmentsPageProps) {
   const [therapists, setTherapists] = useState<Therapist[]>([]);
   const [therapies, setTherapies] = useState<Therapy[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
-  const [form, setForm] = useState({ therapistMembershipId: "", therapyId: "", patientMembershipId: "", startsAt: "" });
+  const [form, setForm] = useState({ therapistId: "", therapyId: "", patientId: "", startsAt: "" });
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -48,7 +48,7 @@ export function AppointmentsPage({ session }: AppointmentsPageProps) {
         method: "POST",
         body: JSON.stringify({
           ...form,
-          patientMembershipId: form.patientMembershipId || undefined,
+          patientId: form.patientId || undefined,
           startsAt: new Date(form.startsAt).toISOString(),
         }),
       });
@@ -115,25 +115,26 @@ export function AppointmentsPage({ session }: AppointmentsPageProps) {
     }
   }
 
-  async function markCompleted(appointment: Appointment) {
-    if (!window.confirm("Deseja marcar este atendimento como realizado?")) return;
+  async function markInProgress(appointment: Appointment) {
+    if (!window.confirm("Deseja iniciar este atendimento?")) return;
     setError("");
     setNotice("");
     try {
       await apiRequest(`/appointments/${appointment.id}/status`, {
         method: "PATCH",
-        body: JSON.stringify({ status: "COMPLETED" }),
+        body: JSON.stringify({ status: "IN_PROGRESS" }),
       });
-      setNotice("Atendimento marcado como realizado.");
+      setNotice("Atendimento iniciado.");
       await load();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Não foi possível atualizar o status.");
     }
   }
 
-  const upcoming = appointments.filter((appointment) => appointment.status === "CONFIRMED" && !appointment.rescheduledAt);
-  const rescheduled = appointments.filter((appointment) => appointment.status === "CONFIRMED" && appointment.rescheduledAt);
+  const upcoming = appointments.filter((appointment) => appointment.status === "CONFIRMED");
+  const rescheduled = appointments.filter((appointment) => appointment.status === "RESCHEDULED");
   const cancelled = appointments.filter((appointment) => appointment.status === "CANCELLED");
+  const inProgress = appointments.filter((appointment) => appointment.status === "IN_PROGRESS");
   const isTherapist = session.activeClinic.role === "THERAPIST";
 
   function appointmentList(items: Appointment[], emptyMessage: string, showActions = false) {
@@ -144,8 +145,8 @@ export function AppointmentsPage({ session }: AppointmentsPageProps) {
             <div className="appointment-date"><strong>{new Intl.DateTimeFormat("pt-BR", { day: "2-digit" }).format(new Date(appointment.startsAt))}</strong><span>{new Intl.DateTimeFormat("pt-BR", { month: "short" }).format(new Date(appointment.startsAt)).replace(".", "")}</span></div>
             <div className="appointment-main"><strong>{appointment.therapyName}</strong><span className="muted">{session.activeClinic.role === "PATIENT" ? appointment.therapistName : appointment.patientName}</span></div>
             <span className="appointment-time">{formatDate(appointment.startsAt)}</span>
-            <span className={`status-pill status-${appointment.status.toLowerCase()}`}>{appointment.status === "CANCELLED" ? "Cancelado" : appointment.rescheduledAt ? "Remarcado" : "Confirmado"}</span>
-            {showActions && isTherapist && <button className="button button-success" onClick={() => void markCompleted(appointment)}>Realizado</button>}
+            <span className={`status-pill status-${appointment.status.toLowerCase()}`}>{({ CONFIRMED: "Confirmado", CANCELLED: "Cancelado", RESCHEDULED: "Remarcado", WAITING: "Aguardando", IN_PROGRESS: "Em atendimento", PAID: "Pago", ACTIVE: "Ativo", INACTIVE: "Inativo" } as Record<string, string>)[appointment.status]}</span>
+            {showActions && isTherapist && appointment.status === "CONFIRMED" && <button className="button button-success" onClick={() => void markInProgress(appointment)}>Iniciar atendimento</button>}
             {showActions && <button className="button button-secondary" onClick={() => void reschedule(appointment)}>Remarcar</button>}
             {showActions && <button className="button button-danger" onClick={() => void cancel(appointment)}>Cancelar</button>}
           </article>
@@ -165,12 +166,12 @@ export function AppointmentsPage({ session }: AppointmentsPageProps) {
         <div className="panel-heading"><div><h2>Novo agendamento</h2><p className="muted">Horários são confirmados após validação da disponibilidade.</p></div><span className="soft-badge">Fuso: {session.activeClinic.timezone}</span></div>
         <div className="form-grid">
           {canBookForPatient && (
-            <label>Paciente<select required value={form.patientMembershipId} onChange={(event) => setForm({ ...form, patientMembershipId: event.target.value })}>
-              <option value="">Selecione</option>{patients.map((patient) => <option key={patient.membershipId} value={patient.membershipId}>{patient.fullName}</option>)}
+            <label>Paciente<select required value={form.patientId} onChange={(event) => setForm({ ...form, patientId: event.target.value })}>
+              <option value="">Selecione</option>{patients.map((patient) => <option key={patient.id} value={patient.id}>{patient.fullName}</option>)}
             </select></label>
           )}
-          <label>Terapeuta<select required value={form.therapistMembershipId} onChange={(event) => setForm({ ...form, therapistMembershipId: event.target.value })}>
-            <option value="">Selecione</option>{therapists.map((therapist) => <option key={therapist.membershipId} value={therapist.membershipId}>{therapist.fullName}</option>)}
+          <label>Terapeuta<select required value={form.therapistId} onChange={(event) => setForm({ ...form, therapistId: event.target.value })}>
+            <option value="">Selecione</option>{therapists.map((therapist) => <option key={therapist.id} value={therapist.id}>{therapist.fullName}</option>)}
           </select></label>
           <label>Terapia<select required value={form.therapyId} onChange={(event) => setForm({ ...form, therapyId: event.target.value })}>
             <option value="">Selecione</option>{therapies.map((therapy) => <option key={therapy.id} value={therapy.id}>{therapy.name} · {therapy.durationMinutes} min</option>)}
@@ -182,6 +183,10 @@ export function AppointmentsPage({ session }: AppointmentsPageProps) {
       <section className="panel">
         <div className="panel-heading"><div><h2>Atendimentos confirmados</h2><p className="muted">Cancelamentos pelo paciente exigem pelo menos quatro horas de antecedência.</p></div><span className="soft-badge">{upcoming.length} confirmados</span></div>
         {appointmentList(upcoming, "Nenhum atendimento confirmado.", true)}
+      </section>
+      <section className="panel appointment-history-panel">
+        <div className="panel-heading"><div><h2>Em atendimento</h2><p className="muted">Sessões iniciadas pela equipe clínica.</p></div><span className="soft-badge">{inProgress.length}</span></div>
+        {appointmentList(inProgress, "Nenhum atendimento em andamento.")}
       </section>
       <section className="panel appointment-history-panel">
         <div className="panel-heading"><div><h2>Atendimentos remarcados</h2><p className="muted">Histórico de horários que foram alterados.</p></div><span className="soft-badge">{rescheduled.length} remarcados</span></div>

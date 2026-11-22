@@ -2,7 +2,7 @@ export interface AuthContext {
   userId: string;
   email: string;
   fullName: string;
-  membershipId: string;
+  userClinicId: string;
   clinicId: string;
   clinicName: string;
   clinicTimezone: string;

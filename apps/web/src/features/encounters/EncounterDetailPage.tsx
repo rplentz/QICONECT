@@ -17,17 +17,11 @@ const tabs: Array<{ id: EncounterTab; label: string }> = [
 ];
 
 const stageStatusLabels = {
-  PLANNED: "Planejada",
-  IN_PROGRESS: "Em andamento",
-  COMPLETED: "Concluída",
-  CANCELLED: "Pausada",
+  ACTIVE: "Ativo", INACTIVE: "Inativo", CONFIRMED: "Confirmada", CANCELLED: "Cancelada",
+  RESCHEDULED: "Remarcada", WAITING: "Aguardando", IN_PROGRESS: "Em atendimento", PAID: "Pago",
 } as const;
 
-const evolutionStatusLabels = {
-  IN_PROGRESS: "Em andamento",
-  COMPLETED: "Concluída",
-  CANCELLED: "Pausada",
-} as const;
+const evolutionStatusLabels = { ...stageStatusLabels };
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
@@ -106,7 +100,7 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
 
   useEffect(() => {
     const attendance = detail?.attendance;
-    if (attendance?.status !== "ACTIVE") return;
+    if (attendance?.status !== "IN_PROGRESS") return;
     const updateElapsed = () => setElapsedSeconds(Math.max(0, Math.floor((Date.now() - new Date(attendance.createdAt).getTime()) / 1000)));
     updateElapsed();
     const timerId = window.setInterval(updateElapsed, 1000);
@@ -200,8 +194,8 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
     setNotice("");
     try {
       await apiRequest(`/encounters/${appointmentId}/start`, { method: "POST" });
-      setNotice("Atendimento iniciado.");
       await load();
+      setNotice("Atendimento iniciado.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Não foi possível iniciar o atendimento.");
     } finally {
@@ -209,19 +203,12 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
     }
   }
 
-  async function finishAttendance() {
-    if (!window.confirm("Deseja finalizar este atendimento?")) return;
-    setBusy(true);
+  async function retryLoad() {
     setError("");
-    setNotice("");
     try {
-      await apiRequest(`/encounters/${appointmentId}/finish`, { method: "POST" });
-      setNotice("Atendimento finalizado.");
       await load();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Não foi possível finalizar o atendimento.");
-    } finally {
-      setBusy(false);
+      setError(reason instanceof Error ? reason.message : "NÃ£o foi possÃ­vel carregar o atendimento.");
     }
   }
 
@@ -314,11 +301,21 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
   }
 
   if (!detail) {
-    return <div className="page-content"><p className="empty-state">{error || "Carregando atendimento..."}</p></div>;
+    return (
+      <div className="page-content">
+        <p className="empty-state">{error || "Carregando atendimento..."}</p>
+        {error && (
+          <div className="form-actions">
+            <button className="button button-secondary" onClick={() => void retryLoad()}>Tentar novamente</button>
+            <button className="button button-quiet" onClick={onBack}>Voltar para atendimentos</button>
+          </div>
+        )}
+      </div>
+    );
   }
 
   const isTherapist = session.activeClinic.role === "THERAPIST";
-  const canEdit = isTherapist && detail.attendance?.status === "ACTIVE";
+  const canEdit = isTherapist && detail.attendance?.status === "IN_PROGRESS";
   const canStart = isTherapist && !detail.attendance && detail.appointment.appointmentStatus === "CONFIRMED";
   const filteredQuestions = detail.questions.filter((question) =>
     question.description.toLocaleLowerCase("pt-BR").includes(questionSearch.trim().toLocaleLowerCase("pt-BR")),
@@ -333,11 +330,7 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
           <p className="muted">{formatDate(detail.appointment.startsAt)} · {detail.appointment.therapyName}</p>
         </div>
         <span className={`status-pill status-${(detail.attendance?.status ?? detail.appointment.appointmentStatus).toLowerCase()}`}>
-          {detail.attendance?.status === "ACTIVE"
-            ? "Em andamento"
-            : detail.attendance?.status === "COMPLETED" || detail.appointment.appointmentStatus === "COMPLETED"
-              ? "Concluído"
-              : "Agendado"}
+          {detail.attendance ? ({ ACTIVE: "Ativo", INACTIVE: "Inativo", CONFIRMED: "Confirmado", CANCELLED: "Cancelado", RESCHEDULED: "Remarcado", WAITING: "Aguardando", IN_PROGRESS: "Em atendimento", PAID: "Pago" } as Record<string, string>)[detail.attendance.status] : "Agendado"}
         </span>
       </div>
 
@@ -346,15 +339,14 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
 
       <section className="encounter-session-bar">
         <div>
-          <span className="eyebrow">{detail.attendance?.status === "ACTIVE" ? "Cronômetro da sessão" : "Paciente"}</span>
-          <strong className={detail.attendance?.status === "ACTIVE" ? "encounter-timer" : "encounter-patient-name"}>
-            {detail.attendance?.status === "ACTIVE"
+          <span className="eyebrow">{detail.attendance?.status === "IN_PROGRESS" ? "Cronômetro da sessão" : "Paciente"}</span>
+          <strong className={detail.attendance?.status === "IN_PROGRESS" ? "encounter-timer" : "encounter-patient-name"}>
+            {detail.attendance?.status === "IN_PROGRESS"
               ? formatElapsed(elapsedSeconds)
               : detail.appointment.patientName}
           </strong>
         </div>
         {canStart && <button className="button button-primary" disabled={busy} onClick={() => void startAttendance()}>{busy ? "Iniciando..." : "Iniciar atendimento"}</button>}
-        {canEdit && <button className="button button-primary" disabled={busy} onClick={() => void finishAttendance()}>{busy ? "Salvando..." : "Finalizar atendimento"}</button>}
         {!isTherapist && <span className="soft-badge">Consulta somente leitura</span>}
       </section>
 

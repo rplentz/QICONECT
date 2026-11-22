@@ -17,7 +17,7 @@ interface LastEncounter {
 }
 
 interface TherapistRecentPatient {
-  membershipId: string;
+  id: string;
   fullName: string;
   encounterId: string;
   attendedAt: string;
@@ -58,6 +58,7 @@ interface TherapyProtocol {
 
 interface DashboardPageProps {
   session: Session;
+  onOpenPatient: (patientId: string) => void;
 }
 
 function clinicDate(timezone: string): string {
@@ -86,10 +87,7 @@ function formatAppointmentDate(value: string, timezone: string): { day: string; 
 
 function statusLabel(status: Appointment["status"]): string {
   const labels: Record<Appointment["status"], string> = {
-    CONFIRMED: "Confirmado",
-    CANCELLED: "Cancelado",
-    COMPLETED: "Concluído",
-    NO_SHOW: "Não compareceu",
+    CONFIRMED: "Confirmado", CANCELLED: "Cancelado", RESCHEDULED: "Remarcado", WAITING: "Aguardando", IN_PROGRESS: "Em atendimento", PAID: "Pago", ACTIVE: "Ativo", INACTIVE: "Inativo"
   };
   return labels[status];
 }
@@ -100,7 +98,7 @@ function errorMessage(reason: unknown): string {
     : "Não foi possível carregar as informações da agenda.";
 }
 
-export function DashboardPage({ session }: DashboardPageProps) {
+export function DashboardPage({ session, onOpenPatient }: DashboardPageProps) {
   const [data, setData] = useState<DashboardData>();
   const [selectedDate, setSelectedDate] = useState(() => clinicDate(session.activeClinic.timezone));
   const [loadingAppointments, setLoadingAppointments] = useState(true);
@@ -264,16 +262,11 @@ export function DashboardPage({ session }: DashboardPageProps) {
               <div className="dashboard-recent-patients">
                 {data.recentPatients.map((patient) => (
                   <button
-                    key={patient.membershipId}
+                    key={patient.id}
                     type="button"
                     className="dashboard-recent-patient-link"
                     aria-expanded={selectedProtocol?.kind === "encounter" && selectedProtocol.id === patient.encounterId}
-                    onClick={() => toggleEncounter({
-                      id: patient.encounterId,
-                      attendedAt: patient.attendedAt,
-                      therapyId: patient.therapyId,
-                      therapyName: patient.therapyName,
-                    }, patient.fullName)}
+                    onClick={() => onOpenPatient(patient.id)}
                   >
                     {patient.fullName}
                   </button>

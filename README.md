@@ -26,7 +26,9 @@ Se já existir um `.env`, preserve-o; basta confirmar que `DATABASE_PATH=data/qi
 
 O frontend encaminha as chamadas `/api` para a API por proxy Vite. O banco contém dados de saúde; mantenha o arquivo local protegido e use somente dados fictícios nesta versão.
 
-## Importar a planilha
+## Importar a planilha de simulação (legado)
+
+Os scripts de importação abaixo pertencem ao esquema anterior e ainda precisam ser convertidos para o modelo de `QIConect_configuracoes.xlsx`. A inicialização do sistema já aplica a nova modelagem; não execute os comandos legados contra o banco remodelado.
 
 O modo incremental importa somente clínica, especialidades, terapias e perguntas, sem apagar os dados existentes. Para substituir a base pela planilha, o modo de substituição preserva a conta administrativa ativa, ativa as contas importadas com novas senhas aleatórias e nunca usa as senhas da planilha. As credenciais geradas são exibidas uma vez após a importação; guarde-as com segurança. Linhas com horários ausentes, arquivos não fornecidos ou referências inválidas ficam para revisão. A substituição é destrutiva e cria um backup automático; veja [docs/modelo-base-dados.md](./docs/modelo-base-dados.md).
 
@@ -38,7 +40,7 @@ py -3.12 scripts\replace_database_from_workbook.py --input "C:\caminho\QIConect_
 
 ## Login e usuários
 
-A tela não preenche nem exibe contas de demonstração. Ao entrar, a API valida o e-mail e a senha contra a tabela `USUARIO` e verifica se o usuário tem vínculo ativo em `memberships` com uma clínica ativa. Uma base vazia recebe contas locais de desenvolvimento para validação; não use os dados gerados em produção. A modelagem derivada da planilha está descrita em [docs/modelo-base-dados.md](./docs/modelo-base-dados.md).
+A tela não preenche nem exibe contas de demonstração. Ao entrar, a API valida o e-mail e a senha contra `USUARIO` e verifica o vínculo ativo em `USUARIO_CLINICA` com uma clínica ativa. Uma base vazia recebe contas locais de desenvolvimento para validação; não use os dados gerados em produção. A modelagem derivada da planilha está descrita em [docs/modelo-base-dados.md](./docs/modelo-base-dados.md).
 
 ## Funcionalidades disponíveis
 

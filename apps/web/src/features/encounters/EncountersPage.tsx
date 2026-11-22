@@ -3,7 +3,7 @@ import { apiRequest, type EncounterSummary, type Session } from "../../lib/api.j
 
 interface EncountersPageProps {
   session: Session;
-  patientMembershipId?: string;
+  patientId?: string;
   onOpen: (appointmentId: string) => void;
 }
 
@@ -12,19 +12,16 @@ function formatDate(value: string) {
 }
 
 const statusLabels: Record<EncounterSummary["appointmentStatus"], string> = {
-  CONFIRMED: "Confirmado",
-  COMPLETED: "Concluído",
-  CANCELLED: "Cancelado",
-  NO_SHOW: "Não compareceu",
-};
+    CONFIRMED: "Confirmado", CANCELLED: "Cancelado", RESCHEDULED: "Remarcado", WAITING: "Aguardando", IN_PROGRESS: "Em atendimento", PAID: "Pago", ACTIVE: "Ativo", INACTIVE: "Inativo"
+  };
 
-export function EncountersPage({ session, patientMembershipId, onOpen }: EncountersPageProps) {
+export function EncountersPage({ session, patientId, onOpen }: EncountersPageProps) {
   const [encounters, setEncounters] = useState<EncounterSummary[]>([]);
   const [error, setError] = useState("");
 
   useEffect(() => {
     apiRequest<{ encounters: EncounterSummary[] }>("/encounters")
-      .then(({ encounters: items }) => setEncounters(patientMembershipId ? items.filter((item) => item.patientMembershipId === patientMembershipId) : items))
+      .then(({ encounters: items }) => setEncounters(patientId ? items.filter((item) => item.patientId === patientId) : items))
       .catch((reason: Error) => setError(reason.message));
   }, []);
 

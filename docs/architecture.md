@@ -2,60 +2,41 @@
 
 ## Stack
 
-- Monorepo npm workspaces.
 - Interface: React, TypeScript e Vite.
-- API: Express 5, TypeScript e validação Zod.
-- Persistência local: SQLite por `better-sqlite3`.
-- Senhas: scrypt com salt aleatório.
-- Testes: Vitest.
+- API: Express 5, TypeScript e Zod.
+- Persistência: SQLite por `better-sqlite3`.
+- Esquema canônico: `apps/api/src/db/workbook-schema.sql`, derivado da planilha de configurações.
+- O versionamento do esquema usa `PRAGMA user_version`; não há tabela de migrações no modelo ativo.
 
 ## Aplicações
 
 ```text
-apps/
-  api/
-    src/
-      config/       Leitura/validação da configuração
-      db/           Criação do banco e dados demonstrativos
-        migrations/ Migrações SQL versionadas do domínio clínico
-      middleware/   Sessão, autorização, erros
-      routes/       Auth, clínica, pacientes, agenda e prontuário
-      security/     Hash de senha e sessão
-      services/     Contas, auditoria e notificações pendentes
-  web/
-    src/
-      features/     Login, painel, agenda, pacientes e prontuário
-      lib/          Cliente da API e tipos de tela
-packages/
-  contracts/       Regra compartilhada de cancelamento
-docs/              Regras e arquitetura
-test/              Configuração de testes
-data/              Banco SQLite local (não versionado)
+apps/api/src/db/         Esquema, migração e dados de desenvolvimento
+apps/api/src/middleware/ Autenticação e autorização
+apps/api/src/routes/     Login, cadastros, pacientes, agenda e prontuário
+apps/api/src/services/   Contas e notificações pendentes
+apps/web/src/features/   Login, painel, agenda, cadastros e prontuário
+packages/contracts/      Regra compartilhada de cancelamento
+data/                    Banco SQLite local e arquivos enviados
 ```
 
-## Isolamento multi-clínica
+## Clínica e perfil
 
-Uma conta pode ter vários vínculos de clínica. Cada requisição autenticada resolve clínica ativa da sessão no banco. Operações clínicas filtram pelo `clinic_id` e pelas permissões do vínculo. Chaves estrangeiras compostas impedem que pacientes, terapeutas e terapias de uma clínica sejam relacionados a um agendamento ou registro de outra.
+`USUARIO_CLINICA` define o perfil e a situação de uma conta em cada clínica. A API valida o vínculo ativo antes de atender solicitações. Os registros de pacientes são escopados por `PACIENTE.clinica_id`; o vínculo do terapeuta com a clínica vem de `USUARIO_CLINICA`.
 
-O SQLite permite validar o MVP localmente sem instalar um serviço de banco. A camada atual usa SQL diretamente e não é uma migração transparente para PostgreSQL; uma estratégia de repositórios/migração deve ser definida antes do crescimento e da implantação multi-tenant em produção.
+## Sessões e senhas
 
-## Sessões e prontuário
+- O cookie de sessão é HttpOnly, SameSite=Lax e Secure em produção.
+- O banco armazena o hash do token de sessão em `sessions`, ligado a `USUARIO`, `CLINICA` e `USUARIO_CLINICA`, com relação opcional ao perfil clínico.
+- Para testes locais, contas novas armazenam senha em texto em `USUARIO.senha`, conforme a decisão temporária do produto. Senhas antigas em hash scrypt continuam verificáveis durante a migração.
+- Os registros do prontuário são armazenados nas entidades específicas da planilha. O modelo atual não tem estado de liberação por registro nem tabela de auditoria.
 
-- O cookie é HttpOnly, SameSite=Lax e Secure em produção.
-- O token de sessão é aleatório; o banco guarda somente SHA-256 do token.
-- Senhas usam scrypt; não são armazenadas em texto puro.
-- O portal filtra prontuários por paciente e estado de liberação.
-- Alterações relevantes são gravadas em `audit_events`.
-- Registros clínicos não são excluídos pela API do MVP.
+## Agenda e notificações
 
-## Agendamento e notificações
+`AGENDA` usa `STATUS`, `TERAPEUTA_DISPONIBILIDADE` e a busca de sobreposições para validar reservas. A disponibilidade representa janelas semanais; o modelo da planilha não registra bloqueios pontuais. O atendimento começa em `ATENDIMENTO`, seguido por `PRONTUARIO` e os registros clínicos associados.
 
-Reservas são criadas dentro de transação SQLite imediata, após validação de disponibilidade e busca de sobreposição para paciente/terapeuta. O cancelamento pelo paciente valida a janela mínima de quatro horas; a equipe pode cancelar fora da janela, com motivo.
+`notifications` fica ligada à clínica e, quando identificável, ao usuário destinatário. O envio externo por e-mail ou WhatsApp continua sem provedor configurado.
 
-O cancelamento grava eventos e itens de notificação para e-mail e WhatsApp. O estado atual `NOT_CONFIGURED` é explícito: não existe integração de envio neste MVP e a gravação não deve ser interpretada como entrega ao terapeuta.
+## Migração do modelo
 
-## Restrições de uso
-
-Os dados de demonstração são criados apenas em `NODE_ENV=development`. O servidor bloqueia inicialização em outros ambientes até que o provisionamento inicial, revisão de segurança e operação de produção sejam implementados.
-
-O mapeamento da planilha para as tabelas SQLite e as decisões de normalização estão em [modelo-base-dados.md](./modelo-base-dados.md).
+Na primeira inicialização após a mudança, a API cria um backup do banco anterior, converte os dados com relações correspondentes e remove as tabelas antigas fora do modelo atualizado. Consulte [modelo-base-dados.md](./modelo-base-dados.md) para os limites do esquema.

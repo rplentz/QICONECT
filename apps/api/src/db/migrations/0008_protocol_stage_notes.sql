@@ -1,0 +1,1 @@
+-- @add-column-if-missing DIAGNOSTICO_PROTOCOLO notes TEXT

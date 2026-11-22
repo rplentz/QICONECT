@@ -3,7 +3,10 @@ import { apiRequest, type Patient, type Session } from "../../lib/api.js";
 
 interface PatientsPageProps {
   session: Session;
-  onOpenEncounters: (patientMembershipId: string) => void;
+  selectedPatientId?: string;
+  onSelectPatient: (patientId: string) => void;
+  onClearSelection: () => void;
+  onOpenEncounters: (patientId: string) => void;
 }
 
 const emptyForm = { fullName: "", email: "", phone: "", password: "", birthDate: "", cpf: "" };
@@ -35,7 +38,7 @@ function displayPhone(value: string | null | undefined) {
   return value ? formatPhone(value) : "—";
 }
 
-export function PatientsPage({ session, onOpenEncounters }: PatientsPageProps) {
+export function PatientsPage({ session, selectedPatientId, onSelectPatient, onClearSelection, onOpenEncounters }: PatientsPageProps) {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [search, setSearch] = useState("");
   const [form, setForm] = useState(emptyForm);
@@ -44,6 +47,7 @@ export function PatientsPage({ session, onOpenEncounters }: PatientsPageProps) {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const canManage = session.activeClinic.role !== "PATIENT";
+  const selectedPatient = patients.find((patient) => patient.id === selectedPatientId);
 
   async function loadPatients(searchTerm = search) {
     const query = searchTerm ? `?search=${encodeURIComponent(searchTerm)}` : "";
@@ -94,7 +98,7 @@ export function PatientsPage({ session, onOpenEncounters }: PatientsPageProps) {
         }),
       });
       setUpdateForm(emptyUpdateForm);
-      setSuccess("Solicitação enviada ao terapeuta para avaliação.");
+      setSuccess("Cadastro atualizado.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Não foi possível enviar a solicitação.");
     }
@@ -116,6 +120,25 @@ export function PatientsPage({ session, onOpenEncounters }: PatientsPageProps) {
       </div>
       {error && <p className="alert alert-error">{error}</p>}
       {success && <p className="alert alert-success">{success}</p>}
+      {selectedPatient && (
+        <section className="panel">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">Ficha do paciente</p>
+              <h2>{selectedPatient.fullName}</h2>
+            </div>
+            <button className="button button-quiet" onClick={onClearSelection}>Voltar à lista</button>
+          </div>
+          <div className="form-grid">
+            <div><span className="field-hint">E-mail</span><p>{selectedPatient.email}</p></div>
+            <div><span className="field-hint">Telefone</span><p>{displayPhone(selectedPatient.phone)}</p></div>
+            <div><span className="field-hint">CPF</span><p>{selectedPatient.cpf ? formatCpf(selectedPatient.cpf) : "—"}</p></div>
+            <div><span className="field-hint">Nascimento</span><p>{selectedPatient.birthDate ? new Intl.DateTimeFormat("pt-BR").format(new Date(`${selectedPatient.birthDate}T12:00:00`)) : "—"}</p></div>
+            <div><span className="field-hint">Último atendimento</span><p>{selectedPatient.lastAppointmentAt ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(selectedPatient.lastAppointmentAt)) : "Nenhum atendimento"}</p></div>
+          </div>
+          {canManage && <button className="button button-secondary" onClick={() => onOpenEncounters(selectedPatient.id)}>Ver atendimentos</button>}
+        </section>
+      )}
       {!canManage && patients[0] ? (
         <section className="panel profile-update-panel">
           <div className="panel-heading">
@@ -134,7 +157,7 @@ export function PatientsPage({ session, onOpenEncounters }: PatientsPageProps) {
               <div className="profile-update-row"><label>CPF<input readOnly value={patients[0].cpf ? formatCpf(patients[0].cpf) : ""} /></label><label>CPF<input inputMode="numeric" maxLength={14} value={updateForm.cpf} onChange={(event) => setUpdateForm({ ...updateForm, cpf: formatCpf(event.target.value) })} placeholder="000.000.000-00" /></label></div>
               <div className="profile-update-row"><label>Data de nascimento<input readOnly value={patients[0].birthDate ? new Intl.DateTimeFormat("pt-BR").format(new Date(`${patients[0].birthDate}T12:00:00`)) : ""} /></label><label>Data de nascimento<input type="date" value={updateForm.birthDate} onChange={(event) => setUpdateForm({ ...updateForm, birthDate: event.target.value })} /></label></div>
             </div>
-            <div className="encounter-form-actions"><button className="button button-primary">Solicitar atualização cadastral</button></div>
+            <div className="encounter-form-actions"><button className="button button-primary">Salvar alterações</button></div>
           </form>
         </section>
       ) : canManage && showForm ? (
@@ -165,10 +188,10 @@ export function PatientsPage({ session, onOpenEncounters }: PatientsPageProps) {
               <thead><tr><th>Paciente</th><th>E-mail</th><th>Telefone</th><th>Último atendimento</th></tr></thead>
               <tbody>
                 {patients.map((patient) => (
-                  <tr key={patient.membershipId}>
-                    <td><span className="person-cell"><span className="avatar">{patient.fullName.charAt(0)}</span><strong>{patient.fullName}</strong></span></td>
+                  <tr key={patient.id}>
+                    <td><button className="patient-attendance-link" onClick={() => onSelectPatient(patient.id)}><span className="person-cell"><span className="avatar">{patient.fullName.charAt(0)}</span><strong>{patient.fullName}</strong></span></button></td>
                     <td>{patient.email}</td><td>{displayPhone(patient.phone)}</td>
-                    <td>{patient.lastAppointmentAt ? <button className="patient-attendance-link" onClick={() => onOpenEncounters(patient.membershipId)}>{new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(patient.lastAppointmentAt))}</button> : <span className="muted">Nenhum atendimento</span>}</td>
+                    <td>{patient.lastAppointmentAt ? <button className="patient-attendance-link" onClick={() => onOpenEncounters(patient.id)}>{new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(patient.lastAppointmentAt))}</button> : <span className="muted">Nenhum atendimento</span>}</td>
                   </tr>
                 ))}
               </tbody>

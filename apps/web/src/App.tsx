@@ -51,6 +51,7 @@ export function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [page, setPage] = useState<Page>("dashboard");
   const [encounterPatientId, setEncounterPatientId] = useState<string | undefined>();
+  const [selectedPatientId, setSelectedPatientId] = useState<string | undefined>();
   const [registrationsExpanded, setRegistrationsExpanded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -196,11 +197,11 @@ export function App() {
         </header>
         <main className="main-content">
           {error && <div className="alert alert-error global-alert">{error}<button onClick={() => setError("")}>Fechar</button></div>}
-          {page === "dashboard" && <DashboardPage session={session} />}
+          {page === "dashboard" && <DashboardPage session={session} onOpenPatient={(patientId) => { setSelectedPatientId(patientId); setPage("patients"); }} />}
           {page === "appointments" && <AppointmentsPage session={session} />}
-          {page === "encounters" && <EncountersPage session={session} patientMembershipId={encounterPatientId} onOpen={(appointmentId) => setPage(`encounter:${appointmentId}`)} />}
+          {page === "encounters" && <EncountersPage session={session} patientId={encounterPatientId} onOpen={(appointmentId) => setPage(`encounter:${appointmentId}`)} />}
           {activeEncounterId && <EncounterDetailPage key={activeEncounterId} appointmentId={activeEncounterId} session={session} onBack={() => setPage("encounters")} />}
-          {page === "patients" && <PatientsPage session={session} onOpenEncounters={(patientMembershipId) => { setEncounterPatientId(patientMembershipId); setPage("encounters"); }} />}
+          {page === "patients" && <PatientsPage session={session} selectedPatientId={selectedPatientId} onSelectPatient={setSelectedPatientId} onClearSelection={() => setSelectedPatientId(undefined)} onOpenEncounters={(patientId) => { setEncounterPatientId(patientId); setPage("encounters"); }} />}
           {page === "records" && <RecordsPage session={session} />}
           {page === "settings" && session.activeClinic.role !== "PATIENT" && <SettingsPage session={session} />}
           {activeRegistration && <RegistrationPage resource={activeRegistration.id} session={session} />}

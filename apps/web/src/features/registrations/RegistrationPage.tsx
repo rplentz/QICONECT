@@ -50,17 +50,11 @@ interface ResourceDefinition {
 type RegistrationOptions = Record<string, SelectOption[]>;
 
 const choice = (value: string, label: string): SelectOption => ({ value, label });
-const encounterStatusChoices = [
-  choice("ACTIVE", "Ativo"),
-  choice("COMPLETED", "Concluído"),
-  choice("CANCELLED", "Cancelado"),
-];
+const encounterStatusChoices = [choice("7", "Em atendimento")];
 const evolutionStatusChoices = [
-  choice("IN_PROGRESS", "Em andamento"),
-  choice("COMPLETED", "Concluído"),
-  choice("CANCELLED", "Cancelado"),
+  choice("1", "Ativo"), choice("2", "Inativo"), choice("3", "Confirmado"), choice("4", "Cancelado"),
+  choice("5", "Remarcado"), choice("6", "Aguardando"), choice("7", "Em atendimento"), choice("8", "Pago"),
 ];
-
 const definitions: Record<RegistrationId, ResourceDefinition> = {
   clinic: {
     title: "Clínica",
@@ -71,7 +65,6 @@ const definitions: Record<RegistrationId, ResourceDefinition> = {
       { name: "email", label: "E-mail", type: "email" },
       { name: "phone", label: "Telefone", type: "tel" },
       { name: "address", label: "Endereço", type: "text" },
-      { name: "timezone", label: "Fuso horário", type: "text", required: true },
     ],
     columns: [
       { key: "name", label: "Clínica" },
@@ -87,7 +80,6 @@ const definitions: Record<RegistrationId, ResourceDefinition> = {
     fields: [
       { name: "fullName", label: "Nome completo", type: "text", required: true },
       { name: "email", label: "E-mail", type: "email", required: true },
-      { name: "phone", label: "Telefone", type: "tel" },
       { name: "role", label: "Perfil", type: "select", optionsKey: "profiles", required: true },
       { name: "password", label: "Senha inicial / nova senha", type: "password", hint: "Mínimo de 10 caracteres. Senhas nunca são exibidas após o cadastro." },
     ],
@@ -131,12 +123,10 @@ const definitions: Record<RegistrationId, ResourceDefinition> = {
     fields: [
       { name: "fullName", label: "Nome completo", type: "text", required: true },
       { name: "email", label: "E-mail", type: "email", required: true },
-      { name: "phone", label: "Telefone", type: "tel" },
       { name: "cpf", label: "CPF", type: "text" },
       { name: "professionalRegistration", label: "Registro profissional", type: "text" },
       { name: "formation", label: "Formação", type: "textarea" },
       { name: "specialtyIds", label: "Especialidades", type: "multiselect", optionsKey: "specialties" },
-      { name: "therapyIds", label: "Terapias habilitadas para agendamento", type: "multiselect", optionsKey: "therapies" },
       { name: "password", label: "Senha inicial", type: "password", hint: "Mínimo de 10 caracteres. Compartilhe a senha com segurança." },
     ],
     columns: [
@@ -145,7 +135,6 @@ const definitions: Record<RegistrationId, ResourceDefinition> = {
       { key: "professionalRegistration", label: "Registro" },
       { key: "formation", label: "Formação" },
       { key: "specialties", label: "Especialidades" },
-      { key: "therapies", label: "Terapias" },
       { key: "active", label: "Status" },
     ],
   },
@@ -183,22 +172,19 @@ const definitions: Record<RegistrationId, ResourceDefinition> = {
   },
   protocol: {
     title: "Protocolo",
-    description: "Protocolos, objetivos, equipe e etapas de atendimento.",
+    description: "Protocolos e etapas de atendimento vinculados ao terapeuta e ao diagnóstico.",
     fields: [
-      { name: "therapyId", label: "Terapia", type: "select", optionsKey: "therapies", required: true },
-      { name: "therapistId", label: "Terapeuta responsável", type: "select", optionsKey: "therapists" },
+      { name: "therapistId", label: "Terapeuta responsável", type: "select", optionsKey: "therapists", required: true },
       { name: "diagnosisId", label: "Diagnóstico relacionado", type: "select", optionsKey: "diagnoses" },
       { name: "name", label: "Nome", type: "text", required: true },
-      { name: "description", label: "Descrição", type: "textarea" },
+      { name: "symptoms", label: "Sintomas", type: "textarea" },
       { name: "objective", label: "Objetivo", type: "textarea" },
-      { name: "active", label: "Ativo", type: "checkbox" },
     ],
     columns: [
       { key: "name", label: "Protocolo" },
-      { key: "therapyName", label: "Terapia" },
       { key: "therapistName", label: "Terapeuta" },
       { key: "diagnosisDescription", label: "Diagnóstico" },
-      { key: "active", label: "Status" },
+      { key: "symptoms", label: "Sintomas" },
     ],
   },
   diagnosis: {
@@ -254,15 +240,10 @@ const definitions: Record<RegistrationId, ResourceDefinition> = {
   },
   encounter: {
     title: "Atendimento",
-    description: "Atendimentos realizados e seus vínculos clínicos.",
+    description: "Atendimento iniciado a partir de um agendamento existente.",
     fields: [
-      { name: "chartId", label: "Prontuário", type: "select", optionsKey: "charts", required: true },
-      { name: "therapistId", label: "Terapeuta", type: "select", optionsKey: "therapists", required: true },
-      { name: "therapyId", label: "Terapia", type: "select", optionsKey: "therapies", required: true },
-      { name: "appointmentId", label: "Agendamento relacionado", type: "select", optionsKey: "appointments" },
-      { name: "attendedAt", label: "Data e horário", type: "datetime-local", required: true },
+      { name: "appointmentId", label: "Agendamento", type: "select", optionsKey: "appointments", required: true },
       { name: "status", label: "Status", type: "select", options: encounterStatusChoices, required: true },
-      { name: "notes", label: "Observações", type: "textarea" },
     ],
     columns: [
       { key: "patientName", label: "Paciente" },
@@ -274,19 +255,14 @@ const definitions: Record<RegistrationId, ResourceDefinition> = {
   },
   chart: {
     title: "Prontuário",
-    description: "Abertura e situação do prontuário de cada paciente.",
+    description: "Prontuário vinculado a um atendimento existente.",
     fields: [
-      { name: "patientId", label: "Paciente", type: "select", optionsKey: "patientsWithoutChart", required: true },
-      { name: "openedAt", label: "Data de abertura", type: "date", required: true },
-      { name: "status", label: "Status", type: "select", options: [
-        choice("ACTIVE", "Ativo"),
-        choice("CLOSED", "Encerrado"),
-        choice("ARCHIVED", "Arquivado"),
-      ], required: true },
+      { name: "attendanceId", label: "Atendimento", type: "select", optionsKey: "attendancesWithoutChart", required: true },
+      { name: "status", label: "Status", type: "select", options: evolutionStatusChoices, required: true },
     ],
     columns: [
       { key: "patientName", label: "Paciente" },
-      { key: "openedAt", label: "Abertura" },
+      { key: "encounterId", label: "Atendimento" },
       { key: "status", label: "Status" },
     ],
   },
@@ -369,15 +345,11 @@ function displayValue(value: unknown, key: string): string {
     }
   }
   const statusLabels: Record<string, string> = {
+    '1': 'Ativo', '2': 'Inativo', '3': 'Confirmado', '4': 'Cancelado', '5': 'Remarcado', '6': 'Aguardando', '7': 'Em atendimento', '8': 'Pago',
     ACTIVE: "Ativo",
     CONFIRMED: "Confirmado",
     CANCELLED: "Cancelado",
-    COMPLETED: "Concluído",
-    NO_SHOW: "Não compareceu",
-    IN_PROGRESS: "Em andamento",
-    CLOSED: "Encerrado",
-    ARCHIVED: "Arquivado",
-    SUSPENDED: "Suspenso",
+    IN_PROGRESS: "Em atendimento",
   };
   return statusLabels[String(value)] ?? String(value);
 }
@@ -506,8 +478,8 @@ export function RegistrationPage({ resource, session }: RegistrationPageProps) {
         await apiRequest<{ appointment: { id: string } }>("/appointments", {
           method: "POST",
           body: JSON.stringify({
-            patientMembershipId: body.patientId,
-            therapistMembershipId: body.therapistId,
+            patientId: body.patientId,
+            therapistId: body.therapistId,
             therapyId: body.therapyId,
             startsAt: new Date(String(body.startsAt)).toISOString(),
           }),
@@ -553,7 +525,7 @@ export function RegistrationPage({ resource, session }: RegistrationPageProps) {
       );
       if (!confirmed) return;
     } else if (["user", "patient", "therapist", "specialty", "therapy"].includes(resource)) {
-      const action = deleting ? "Excluir" : "Restaurar";
+      const action = deleting ? "Inativar" : "Ativar";
       const detail = deleting ? "O registro será inativado, mas permanecerá no banco e manterá seus vínculos." : "O registro voltará a ficar ativo.";
       if (!window.confirm(`${action} "${entityName}"? ${detail}`)) return;
     }
@@ -570,7 +542,7 @@ export function RegistrationPage({ resource, session }: RegistrationPageProps) {
         window.location.reload();
         return;
       }
-      setNotice(active ? "Cadastro restaurado." : "Cadastro excluído logicamente e inativado.");
+      setNotice(active ? "Cadastro ativado." : "Cadastro inativado.");
       await load();
     } catch (reason) {
       setError(actionErrorMessage(reason));
@@ -594,7 +566,7 @@ export function RegistrationPage({ resource, session }: RegistrationPageProps) {
     }
   }
 
-  async function appointmentAction(record: RegistrationRecord, action: "cancel" | "reschedule" | "COMPLETED" | "NO_SHOW") {
+  async function appointmentAction(record: RegistrationRecord, action: "cancel" | "reschedule") {
     setError("");
     setNotice("");
     try {
@@ -605,12 +577,10 @@ export function RegistrationPage({ resource, session }: RegistrationPageProps) {
           method: "POST",
           body: JSON.stringify({ reason: reason.trim() }),
         });
-        setNotice("Agendamento cancelado. As notificações dependem da configuração dos provedores.");
-      } else if (action === "reschedule") {
+        setNotice("Agendamento cancelado.");
+      } else {
         const suggestedDate = new Date(new Date(String(record.startsAt)).getTime() + 24 * 60 * 60 * 1000);
-        const suggested = new Date(suggestedDate.getTime() - suggestedDate.getTimezoneOffset() * 60_000)
-          .toISOString()
-          .slice(0, 16);
+        const suggested = new Date(suggestedDate.getTime() - suggestedDate.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
         const input = window.prompt("Novo horário local (AAAA-MM-DDTHH:mm):", suggested);
         if (!input) return;
         const startsAt = new Date(input);
@@ -620,21 +590,14 @@ export function RegistrationPage({ resource, session }: RegistrationPageProps) {
           body: JSON.stringify({ startsAt: startsAt.toISOString() }),
         });
         setNotice("Agendamento remarcado.");
-      } else {
-        await apiRequest(`/appointments/${encodeURIComponent(record.id)}/status`, {
-          method: "PATCH",
-          body: JSON.stringify({ status: action }),
-        });
-        setNotice(action === "COMPLETED" ? "Atendimento concluído." : "Atendimento registrado como não compareceu.");
       }
       await load();
     } catch (reason) {
       setError(actionErrorMessage(reason));
     }
   }
-
   const fields = definition.fields;
-  const missingOptions = fields.find((field) => field.optionsKey && field.required && (options[field.optionsKey]?.length ?? 0) === 0);
+  const missingOptions = resource === "chart" ? undefined : fields.find((field) => field.optionsKey && field.required && (options[field.optionsKey]?.length ?? 0) === 0);
   const canArchiveClinic = session.clinics.some(
     (clinic) => clinic.clinicId !== session.activeClinic.id && clinic.role === "CLINIC_ADMIN",
   );
@@ -664,9 +627,11 @@ export function RegistrationPage({ resource, session }: RegistrationPageProps) {
           Cadastre primeiro: {missingOptions.optionsKey === "therapies" ? "terapia" : missingOptions.optionsKey === "specialties" ? "especialidade" : missingOptions.optionsKey === "charts" ? "prontuário" : missingOptions.optionsKey === "diagnosisProtocols" ? "vínculo de diagnóstico e etapa de protocolo" : "os registros relacionados"}.
         </p>
       )}
+      {resource === "chart" && <p className="notice-card">O prontuário é criado automaticamente quando o atendimento começa.</p>}
       {resource === "clinic" && !canArchiveClinic && (
         <p className="muted">Para arquivar esta clínica, seu usuário precisa ter acesso administrativo a outra clínica ativa.</p>
       )}
+      {resource !== "chart" && (
       <form className="panel form-panel registration-form" onSubmit={submit}>
         <div className="panel-heading">
           <div>
@@ -769,6 +734,7 @@ export function RegistrationPage({ resource, session }: RegistrationPageProps) {
           )}
         </div>
       </form>
+      )}
 
       {resource === "clinic" && archivedClinics.length > 0 && (
         <section className="panel">
@@ -821,17 +787,12 @@ export function RegistrationPage({ resource, session }: RegistrationPageProps) {
                   <tr key={record.id}>
                     {definition.columns.map((column) => <td key={column.key}>{displayValue(record[column.key], column.key)}</td>)}
                     <td className="registration-row-actions">
-                      {resource !== "agenda" && (
-                        <button type="button" className="button button-secondary button-small" onClick={() => startEdit(record)}>Editar</button>
-                      )}
-                      {resource === "clinic" && (
+                      {["clinic", "user", "patient", "therapist", "specialty", "therapy"].includes(resource) && (
                         <button type="button" className="button button-secondary button-small" onClick={() => startEdit(record)}>Editar</button>
                       )}
                       {resource === "agenda" && record.status === "CONFIRMED" && (
                         <>
                           <button type="button" className="button button-secondary button-small" onClick={() => void appointmentAction(record, "reschedule")}>Remarcar</button>
-                          <button type="button" className="button button-primary button-small" onClick={() => void appointmentAction(record, "COMPLETED")}>Concluir</button>
-                          <button type="button" className="button button-secondary button-small" onClick={() => void appointmentAction(record, "NO_SHOW")}>Falta</button>
                           <button type="button" className="button button-danger button-small" onClick={() => void appointmentAction(record, "cancel")}>Cancelar</button>
                         </>
                       )}
@@ -848,7 +809,7 @@ export function RegistrationPage({ resource, session }: RegistrationPageProps) {
                           {pendingActionId === record.id
                             ? "Processando..."
                             : ["user", "patient", "therapist", "specialty", "therapy", "clinic"].includes(resource)
-                              ? record.active === true || record.active === 1 ? "Excluir" : "Restaurar"
+                              ? record.active === true || record.active === 1 ? resource === "clinic" ? "Arquivar" : "Inativar" : "Restaurar"
                               : record.active === true || record.active === 1 ? "Inativar" : "Ativar"}
                         </button>
                       )}
