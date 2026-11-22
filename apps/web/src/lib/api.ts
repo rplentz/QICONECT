@@ -112,9 +112,9 @@ export interface EncounterDetails {
     id: string;
     chartId: string;
     attendedAt: string;
-    status: "IN_PROGRESS";
+    status: Appointment["status"];
     notes: string | null;
-    createdAt: string;
+    startedAt: string;
   } | null;
   questions: Array<{ id: string; description: string }>;
   anamneses: Array<{
@@ -124,11 +124,12 @@ export interface EncounterDetails {
     registeredAt: string;
     answers: Array<{ questionId: string; question: string; answer: string }>;
   }>;
-  diagnoses: Array<{ id: string; description: string; diagnosedAt: string }>;
+  diagnoses: Array<{ id: string; description: string; diagnosedAt: string | null }>;
   protocols: Array<{
     diagnosisProtocolId: string;
     diagnosisId: string;
     diagnosisDescription: string;
+    diagnosedAt: string | null;
     protocolId: string;
     protocolName: string;
     stepId: string;
@@ -159,7 +160,7 @@ export interface EncounterDetails {
     id: string;
     diagnosisProtocolId: string;
     description: string;
-    evolvedAt: string;
+    evolvedAt: string | null;
     status: Appointment["status"];
     sequence: number;
     stepDescription: string;

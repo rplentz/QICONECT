@@ -23,18 +23,21 @@ function guard(row:Record<string,any>,auth:ReturnType<typeof getAuth>){
 }
 function getAttendance(row:Record<string,any>){return db.prepare("SELECT * FROM ATENDIMENTO WHERE paciente_id=? AND terapeuta_id=? AND terapia_id=? AND dt_atend=? ORDER BY id DESC LIMIT 1").get(row.patientId,row.therapistId,row.therapyId,row.startsAt) as Record<string,any>|undefined;}
 function details(row:Record<string,any>,clinicId:number){
- const attendance=getAttendance(row); const base={id:String(row.id),patientId:String(row.patientId),therapistId:String(row.therapistId),therapyId:String(row.therapyId),startsAt:row.startsAt,endsAt:row.endsAt,appointmentStatus:statusName(row.status),therapyName:row.therapyName,patientName:row.patientName,therapistName:row.therapistName};
+ const attendance=getAttendance(row);
+ if(attendance&&Number(attendance.status)===7&&!attendance.dt_inicio_real){const firstClinicalEntry=db.prepare("SELECT MIN(dt_registro) FROM ANAMNESE WHERE atendimento_id=?").pluck().get(attendance.id) as string|null;attendance.dt_inicio_real=firstClinicalEntry||new Date().toISOString();db.prepare("UPDATE ATENDIMENTO SET dt_inicio_real=? WHERE id=? AND dt_inicio_real IS NULL").run(attendance.dt_inicio_real,attendance.id);}
+ const base={id:String(row.id),patientId:String(row.patientId),therapistId:String(row.therapistId),therapyId:String(row.therapyId),startsAt:row.startsAt,endsAt:row.endsAt,appointmentStatus:statusName(row.status),therapyName:row.therapyName,patientName:row.patientName,therapistName:row.therapistName};
  const questions=db.prepare("SELECT id,descricao AS description FROM PERGUNTAS ORDER BY id").all() as Array<{id:number;description:string}>;
  if(!attendance)return {appointment:{...base},attendance:null,questions,anamneses:[],diagnoses:[],protocols:[],protocolOptions:protocolOptions(row.therapyId,clinicId),evolutions:[],attachments:[]};
  const anamneses=db.prepare("SELECT id,descricao AS description,dt_registro AS registeredAt FROM ANAMNESE WHERE atendimento_id=? ORDER BY id").all(attendance.id) as Array<Record<string,any>>;
  const answerQuery=db.prepare(`SELECT ap.pergunta_id AS questionId,q.descricao AS question,ap.Resposta AS answer FROM ANAMNESE_PERGUNTAS ap JOIN PERGUNTAS q ON q.id=ap.pergunta_id WHERE ap.anamnese_id=?`);
- const diagnoses=db.prepare("SELECT id,descricao AS description,dt_diagnostico AS diagnosedAt FROM DIAGNOSTICO WHERE paciente_id=? AND terapeuta_id=? ORDER BY id DESC").all(row.patientId,row.therapistId) as Array<Record<string,any>>;
+ const diagnoses=db.prepare("SELECT id,descricao AS description,dt_diagnostico AS diagnosedAt FROM DIAGNOSTICO WHERE paciente_id=? AND terapeuta_id=? ORDER BY dt_diagnostico IS NULL,dt_diagnostico DESC,id DESC").all(row.patientId,row.therapistId) as Array<Record<string,any>>;
  const protocols=db.prepare(`SELECT dp.id AS diagnosisProtocolId,d.id AS diagnosisId,d.descricao AS diagnosisDescription,
+  d.dt_diagnostico AS diagnosedAt,
   p.id AS protocolId,p.nome AS protocolName,st.id AS stepId,st.sequencia AS sequence,st.descricao AS stepDescription,
   st.dt_inicio AS startsAt,st.dt_fim AS endsAt,st.obs AS stepNotes,dp.dt_diagnostico AS startedAt,dp.status
   FROM DIAGNOSTICO_PROTOCOLO dp JOIN DIAGNOSTICO d ON d.id=dp.diagnostico_id
   JOIN PROTOCOLO_ETAPA st ON st.id=dp.protocolo_etapa_id JOIN PROTOCOLO p ON p.id=st.protocolo_id
-  WHERE d.paciente_id=? AND d.terapeuta_id=? ORDER BY p.id,st.sequencia`).all(row.patientId,row.therapistId) as Array<Record<string,any>>;
+  WHERE d.paciente_id=? AND d.terapeuta_id=? ORDER BY d.dt_diagnostico IS NULL,d.dt_diagnostico DESC,d.id DESC,p.nome,st.dt_inicio IS NULL,st.dt_inicio DESC,st.sequencia DESC`).all(row.patientId,row.therapistId) as Array<Record<string,any>>;
  const statusMap=(id:number)=>({1:"ACTIVE",2:"INACTIVE",3:"CONFIRMED",4:"CANCELLED",5:"RESCHEDULED",6:"WAITING",7:"IN_PROGRESS",8:"PAID"} as Record<number,string>)[id]??"WAITING";
  const evolutions=db.prepare(`SELECT e.id,e.diagnostico_protocolo_id AS diagnosisProtocolId,e.descricao AS description,e.dt_evolucao AS evolvedAt,e.status,
   d.descricao AS diagnosisDescription,p.nome AS protocolName,st.sequencia AS sequence,st.descricao AS stepDescription
@@ -42,7 +45,7 @@ function details(row:Record<string,any>,clinicId:number){
   JOIN PROTOCOLO_ETAPA st ON st.id=dp.protocolo_etapa_id JOIN PROTOCOLO p ON p.id=st.protocolo_id
   WHERE d.paciente_id=? AND d.terapeuta_id=? ORDER BY e.dt_evolucao DESC`).all(row.patientId,row.therapistId) as Array<Record<string,any>>;
  const attachments=db.prepare("SELECT id,arquivo,descricao,dt_atualizacao FROM ANEXO WHERE atendimento_id=? ORDER BY id").all(attendance.id) as Array<{id:number;arquivo:string;descricao:string|null;dt_atualizacao:string|null}>;
- return {appointment:{...base},attendance:{id:String(attendance.id),chartId:String(db.prepare("SELECT id FROM PRONTUARIO WHERE atendimento_id=?").pluck().get(attendance.id)??""),attendedAt:attendance.dt_atend,status:statusName(Number(attendance.status)),notes:null,createdAt:attendance.dt_atend},questions,
+ return {appointment:{...base},attendance:{id:String(attendance.id),chartId:String(db.prepare("SELECT id FROM PRONTUARIO WHERE atendimento_id=?").pluck().get(attendance.id)??""),attendedAt:attendance.dt_atend,status:statusName(Number(attendance.status)),notes:null,startedAt:attendance.dt_inicio_real??attendance.dt_atend},questions,
   anamneses:anamneses.map(a=>({id:String(a.id),type:"Anamnese",description:a.description??"",registeredAt:a.registeredAt,answers:answerQuery.all(a.id)})),
   diagnoses:diagnoses.map(d=>({...d,id:String(d.id)})),protocols:protocols.map(p=>({...p,diagnosisProtocolId:String(p.diagnosisProtocolId),diagnosisId:String(p.diagnosisId),protocolId:String(p.protocolId),stepId:String(p.stepId),status:statusMap(p.status)})),
   protocolOptions:protocolOptions(row.therapyId,clinicId),evolutions:evolutions.map(e=>({...e,id:String(e.id),diagnosisProtocolId:String(e.diagnosisProtocolId),status:statusMap(e.status),authorName:row.therapistName})),
@@ -70,8 +73,9 @@ encounterRouter.post("/encounters/:appointmentId/attachments",requireAuth,requir
  const key=`${auth.clinicId}/${att.id}/${randomUUID()}`;const fullPath=resolve(uploadRoot,key);if(!fullPath.startsWith(uploadRoot))throw new HttpError(400,"INVALID_FILE_PATH","Caminho de arquivo inválido.");
  await mkdir(dirname(fullPath),{recursive:true});await writeFile(fullPath,bytes,{flag:"wx"});
  const meta=JSON.stringify({storageKey:key,originalFilename:input.originalFilename,contentType:input.contentType,sizeBytes:bytes.length,type:input.type});
- const id=db.prepare("INSERT INTO ANEXO(prontuario_id,atendimento_id,arquivo,descricao,dt_atualizacao) VALUES(?,?,?,?,?)").run(chart.id,att.id,meta,input.description??null,new Date().toISOString()).lastInsertRowid;
- response.status(201).json({id:String(id)});
+ const uploadedAt=new Date().toISOString();
+ const id=db.prepare("INSERT INTO ANEXO(prontuario_id,atendimento_id,arquivo,descricao,dt_atualizacao) VALUES(?,?,?,?,?)").run(chart.id,att.id,meta,input.description??null,uploadedAt).lastInsertRowid;
+ response.status(201).json({attachment:{id:String(id),type:input.type,originalFilename:input.originalFilename,contentType:input.contentType,sizeBytes:bytes.length,description:input.description??null,uploadedAt,url:`/api/v1/encounters/attachments/${id}/download`}});
  }catch(e){next(e);}});
 encounterRouter.get("/encounters/attachments/:id/download",requireAuth,async(request,response,next)=>{try{
  const auth=getAuth(request);const id=z.coerce.number().positive().parse(request.params.id);const row=db.prepare(`SELECT a.arquivo,a.atendimento_id AS attendanceId,a.prontuario_id AS chartId,p.clinica_id AS clinicId,
@@ -83,7 +87,19 @@ encounterRouter.get("/encounters/attachments/:id/download",requireAuth,async(req
  const filePath=resolve(uploadRoot,fileKey);if(!filePath.startsWith(uploadRoot))throw new HttpError(400,"INVALID_FILE_PATH","Caminho de arquivo inválido.");
  const content=await readFile(filePath);response.setHeader("Content-Type",metadata.contentType);response.setHeader("Content-Disposition",`inline; filename*=UTF-8''${encodeURIComponent(metadata.originalFilename)}`);response.send(content);
  }catch(e){next(e);}});
-encounterRouter.post("/encounters/:appointmentId/start",requireAuth,requireRole("THERAPIST"),(request,response,next)=>{try{const auth=getAuth(request);const row=appointment(z.coerce.number().positive().parse(request.params.appointmentId),Number(auth.clinicId));guard(row,auth);let att=getAttendance(row);if(!att){const create=db.transaction(()=>{const id=db.prepare("INSERT INTO ATENDIMENTO(paciente_id,terapeuta_id,terapia_id,dt_atend,status) VALUES(?,?,?,?,7)").run(row.patientId,row.therapistId,row.therapyId,row.startsAt).lastInsertRowid;db.prepare("INSERT INTO PRONTUARIO(paciente_id,atendimento_id,status) VALUES(?,?,1)").run(row.patientId,id);db.prepare("UPDATE AGENDA SET status=7 WHERE id=?").run(row.id);});create.immediate();att=getAttendance(row);}response.json({attendance:att,created:true});}catch(e){next(e);}});
+encounterRouter.post("/encounters/:appointmentId/start",requireAuth,requireRole("THERAPIST"),(request,response,next)=>{try{
+ const auth=getAuth(request);const row=appointment(z.coerce.number().positive().parse(request.params.appointmentId),Number(auth.clinicId));guard(row,auth);let att=getAttendance(row);
+ if(!att){
+  const startedAt=new Date().toISOString();
+  const create=db.transaction(()=>{const id=db.prepare("INSERT INTO ATENDIMENTO(paciente_id,terapeuta_id,terapia_id,dt_atend,status,dt_inicio_real) VALUES(?,?,?,?,7,?)").run(row.patientId,row.therapistId,row.therapyId,row.startsAt,startedAt).lastInsertRowid;db.prepare("INSERT INTO PRONTUARIO(paciente_id,atendimento_id,status) VALUES(?,?,1)").run(row.patientId,id);db.prepare("UPDATE AGENDA SET status=7 WHERE id=?").run(row.id);});create.immediate();att=getAttendance(row);
+ }else if(Number(att.status)===1){
+  const startedAt=new Date().toISOString();
+  const start=db.transaction(()=>{db.prepare("UPDATE ATENDIMENTO SET status=7,dt_inicio_real=COALESCE(dt_inicio_real,?) WHERE id=? AND status=1").run(startedAt,att!.id);db.prepare("UPDATE AGENDA SET status=7 WHERE id=?").run(row.id);});start.immediate();att=getAttendance(row);
+ }else if(Number(att.status)!==7){
+  throw new HttpError(409,"ATTENDANCE_NOT_STARTABLE","Este atendimento nÃ£o estÃ¡ em um status que permita iniciÃ¡-lo.");
+ }
+ response.json({attendance:att,created:true});
+}catch(e){next(e);}});
 encounterRouter.post("/encounters/:appointmentId/anamneses",requireAuth,requireRole("THERAPIST"),(request,response,next)=>{try{const auth=getAuth(request);const row=appointment(Number(request.params.appointmentId),Number(auth.clinicId));guard(row,auth);const att=getAttendance(row);if(!att)throw new HttpError(409,"ATTENDANCE_NOT_STARTED","Inicie o atendimento primeiro.");const input=z.object({type:z.string().optional(),description:z.string().min(1),selectedQuestionIds:z.array(z.coerce.number()),answers:z.record(z.string(),z.string())}).parse(request.body);const create=db.transaction(()=>{const id=db.prepare("INSERT INTO ANAMNESE(atendimento_id,descricao,dt_registro) VALUES(?,?,?)").run(att.id,input.type?`${input.type}: ${input.description}`:input.description,new Date().toISOString()).lastInsertRowid;for(const q of input.selectedQuestionIds)db.prepare("INSERT INTO ANAMNESE_PERGUNTAS(anamnese_id,pergunta_id,Resposta) VALUES(?,?,?)").run(id,q,input.answers[String(q)]??"");return id;});response.status(201).json({id:String(create.immediate())});}catch(e){next(e);}});
 encounterRouter.patch("/encounters/:appointmentId/anamneses/:anamnesisId",requireAuth,(request,response,next)=>{try{const auth=getAuth(request);const row=appointment(Number(request.params.appointmentId),Number(auth.clinicId));guard(row,auth);const att=getAttendance(row);if(!att)throw new HttpError(409,"ATTENDANCE_NOT_STARTED","Inicie o atendimento primeiro.");const input=z.object({type:z.string().optional(),description:z.string().min(1),selectedQuestionIds:z.array(z.coerce.number()),answers:z.record(z.string(),z.string())}).parse(request.body);const id=z.coerce.number().parse(request.params.anamnesisId);db.prepare("UPDATE ANAMNESE SET descricao=? WHERE id=? AND atendimento_id=?").run(input.type?`${input.type}: ${input.description}`:input.description,id,att.id);db.prepare("DELETE FROM ANAMNESE_PERGUNTAS WHERE anamnese_id=?").run(id);for(const q of input.selectedQuestionIds)db.prepare("INSERT INTO ANAMNESE_PERGUNTAS(anamnese_id,pergunta_id,Resposta) VALUES(?,?,?)").run(id,q,input.answers[String(q)]??"");response.json({id:String(id)});}catch(e){next(e);}});
 encounterRouter.post("/encounters/:appointmentId/diagnoses",requireAuth,requireRole("THERAPIST"),(request,response,next)=>{try{const auth=getAuth(request);const row=appointment(Number(request.params.appointmentId),Number(auth.clinicId));guard(row,auth);const input=z.object({description:z.string().min(1),diagnosedAt:z.string()}).parse(request.body);const id=db.prepare("INSERT INTO DIAGNOSTICO(terapeuta_id,paciente_id,descricao,dt_diagnostico) VALUES(?,?,?,?)").run(row.therapistId,row.patientId,input.description,input.diagnosedAt).lastInsertRowid;response.status(201).json({id:String(id),description:input.description,diagnosedAt:input.diagnosedAt});}catch(e){next(e);}});

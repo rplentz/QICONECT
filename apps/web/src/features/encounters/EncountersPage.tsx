@@ -64,7 +64,10 @@ export function EncountersPage({ session, patientId, onOpen }: EncountersPagePro
                   {statusLabels[encounter.appointmentStatus]}
                 </span>
                 <button className="button button-secondary" onClick={() => onOpen(encounter.appointmentId)}>
-                  Acessar atendimento
+                  {!isPatient && !["CANCELLED", "RESCHEDULED"].includes(encounter.appointmentStatus)
+                    && (encounter.attendanceStatus === null || encounter.attendanceStatus === "ACTIVE")
+                    ? "Iniciar Atendimento"
+                    : "Acessar Atendimento"}
                 </button>
               </article>
             ))}

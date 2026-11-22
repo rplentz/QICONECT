@@ -104,10 +104,12 @@ appointmentRouter.patch("/appointments/:id/status",requireAuth,requireRole("THER
     const row=db.prepare(`${select} WHERE a.id=? AND p.clinica_id=?`).get(id,Number(auth.clinicId)) as Record<string,any>|undefined;
     if(!row)throw new HttpError(404,"APPOINTMENT_NOT_FOUND","Agendamento não encontrado.");
     if(Number(db.prepare("SELECT id FROM TERAPEUTA WHERE usuario_id=?").pluck().get(Number(auth.userId)))!==row.terapeuta_id) throw new HttpError(403,"FORBIDDEN","Você só pode iniciar seus próprios atendimentos.");
+    const startedAt=new Date().toISOString();
     db.prepare("UPDATE AGENDA SET status=7 WHERE id=?").run(id);
     const attendance=db.prepare("SELECT id FROM ATENDIMENTO WHERE paciente_id=? AND terapeuta_id=? AND terapia_id=? AND dt_atend=?").get(row.paciente_id,row.terapeuta_id,row.terapia_id,row.startsAt);
     let attendanceId = attendance ? Number((attendance as {id:number}).id) : 0;
-    if(!attendanceId) attendanceId = Number(db.prepare("INSERT INTO ATENDIMENTO(paciente_id,terapeuta_id,terapia_id,dt_atend,status) VALUES(?,?,?,?,7)").run(row.paciente_id,row.terapeuta_id,row.terapia_id,row.startsAt).lastInsertRowid);
+    if(!attendanceId) attendanceId = Number(db.prepare("INSERT INTO ATENDIMENTO(paciente_id,terapeuta_id,terapia_id,dt_atend,status,dt_inicio_real) VALUES(?,?,?,?,7,?)").run(row.paciente_id,row.terapeuta_id,row.terapia_id,row.startsAt,startedAt).lastInsertRowid);
+    else db.prepare("UPDATE ATENDIMENTO SET status=7,dt_inicio_real=COALESCE(dt_inicio_real,?) WHERE id=?").run(startedAt,attendanceId);
     if(!db.prepare("SELECT id FROM PRONTUARIO WHERE atendimento_id=?").get(attendanceId)) db.prepare("INSERT INTO PRONTUARIO(paciente_id,atendimento_id,status) VALUES(?,?,1)").run(row.paciente_id,attendanceId);
     response.json({status:input.status});}catch(e){next(e);}
 });

@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { apiRequest, type EncounterDetails, type Session } from "../../lib/api.js";
 
 type EncounterTab = "anamnesis" | "diagnosis" | "protocol" | "evolutions";
@@ -21,10 +21,121 @@ const stageStatusLabels = {
   RESCHEDULED: "Remarcada", WAITING: "Aguardando", IN_PROGRESS: "Em atendimento", PAID: "Pago",
 } as const;
 
+type ProtocolStage = EncounterDetails["protocols"][number];
+interface DiagnosisProtocolGroup {
+  diagnosisId: string;
+  diagnosisDescription: string;
+  diagnosedAt: string | null;
+  protocols: Array<{ protocolId: string; protocolName: string; stages: ProtocolStage[] }>;
+}
+interface EvolutionDiagnosisGroup {
+  diagnosisId: string;
+  diagnosisDescription: string;
+  diagnosedAt: string | null;
+  protocols: Array<{
+    protocolId: string;
+    protocolName: string;
+    stages: Array<ProtocolStage & { evolutions: EncounterDetails["evolutions"] }>;
+  }>;
+}
+
 const evolutionStatusLabels = { ...stageStatusLabels };
 
 function formatDate(value: string) {
-  return new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? "Data não informada"
+    : new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium", timeStyle: "short" }).format(date);
+}
+
+function formatClinicalDate(value: string | null | undefined) {
+  if (!value) return "Data não informada";
+  const date = new Date(/^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T12:00:00` : value);
+  return Number.isNaN(date.getTime())
+    ? "Data não informada"
+    : new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium" }).format(date);
+}
+
+function groupProtocolsByDiagnosis(stages: ProtocolStage[]): DiagnosisProtocolGroup[] {
+  const groups = new Map<string, DiagnosisProtocolGroup>();
+  for (const stage of stages) {
+    let diagnosis = groups.get(stage.diagnosisId);
+    if (!diagnosis) {
+      diagnosis = {
+        diagnosisId: stage.diagnosisId,
+        diagnosisDescription: stage.diagnosisDescription,
+        diagnosedAt: stage.diagnosedAt,
+        protocols: [],
+      };
+      groups.set(stage.diagnosisId, diagnosis);
+    }
+    let protocol = diagnosis.protocols.find((item) => item.protocolId === stage.protocolId);
+    if (!protocol) {
+      protocol = { protocolId: stage.protocolId, protocolName: stage.protocolName, stages: [] };
+      diagnosis.protocols.push(protocol);
+    }
+    protocol.stages.push(stage);
+  }
+  return [...groups.values()].sort((first, second) => {
+    const firstTime = first.diagnosedAt ? new Date(first.diagnosedAt).getTime() : 0;
+    const secondTime = second.diagnosedAt ? new Date(second.diagnosedAt).getTime() : 0;
+    return (Number.isFinite(secondTime) ? secondTime : 0) - (Number.isFinite(firstTime) ? firstTime : 0)
+      || second.diagnosisId.localeCompare(first.diagnosisId, undefined, { numeric: true });
+  });
+}
+
+function dateOrderValue(value: string | null | undefined): number {
+  if (!value) return 0;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function groupEvolutionsByDiagnosisAndStage(
+  stages: ProtocolStage[],
+  evolutions: EncounterDetails["evolutions"],
+): EvolutionDiagnosisGroup[] {
+  const groups = new Map<string, EvolutionDiagnosisGroup>();
+  for (const stage of stages) {
+    let diagnosis = groups.get(stage.diagnosisId);
+    if (!diagnosis) {
+      diagnosis = {
+        diagnosisId: stage.diagnosisId,
+        diagnosisDescription: stage.diagnosisDescription,
+        diagnosedAt: stage.diagnosedAt,
+        protocols: [],
+      };
+      groups.set(stage.diagnosisId, diagnosis);
+    }
+    let protocol = diagnosis.protocols.find((item) => item.protocolId === stage.protocolId);
+    if (!protocol) {
+      protocol = { protocolId: stage.protocolId, protocolName: stage.protocolName, stages: [] };
+      diagnosis.protocols.push(protocol);
+    }
+    protocol.stages.push({
+      ...stage,
+      evolutions: evolutions
+        .filter((evolution) => evolution.diagnosisProtocolId === stage.diagnosisProtocolId)
+        .sort((first, second) => dateOrderValue(second.evolvedAt) - dateOrderValue(first.evolvedAt)),
+    });
+  }
+
+  for (const diagnosis of groups.values()) {
+    for (const protocol of diagnosis.protocols) {
+      protocol.stages.sort((first, second) =>
+        dateOrderValue(second.startsAt) - dateOrderValue(first.startsAt)
+          || second.sequence - first.sequence,
+      );
+    }
+    diagnosis.protocols.sort((first, second) =>
+      dateOrderValue(second.stages[0]?.startsAt) - dateOrderValue(first.stages[0]?.startsAt)
+        || first.protocolName.localeCompare(second.protocolName, "pt-BR"),
+    );
+  }
+
+  return [...groups.values()].sort((first, second) =>
+    dateOrderValue(second.diagnosedAt) - dateOrderValue(first.diagnosedAt)
+      || second.diagnosisId.localeCompare(first.diagnosisId, undefined, { numeric: true }),
+  );
 }
 
 function today() {
@@ -64,11 +175,14 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [selectedQuestionIds, setSelectedQuestionIds] = useState<string[]>([]);
   const [editingAnamnesisId, setEditingAnamnesisId] = useState<string | null>(null);
+  const [anamnesisSaved, setAnamnesisSaved] = useState(false);
   const [newQuestion, setNewQuestion] = useState("");
   const [questionSearch, setQuestionSearch] = useState("");
   const [showNewQuestion, setShowNewQuestion] = useState(false);
   const [examFiles, setExamFiles] = useState<File[]>([]);
   const [tongueFile, setTongueFile] = useState<File | null>(null);
+  const examInputRef = useRef<HTMLInputElement>(null);
+  const tongueInputRef = useRef<HTMLInputElement>(null);
   const [attachmentDescription, setAttachmentDescription] = useState("");
   const [anamnesisForm, setAnamnesisForm] = useState({ type: "Anamnese clínica", description: "", answers: {} as Record<string, string> });
   const [diagnosisForm, setDiagnosisForm] = useState({ description: "", diagnosedAt: today() });
@@ -101,11 +215,11 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
   useEffect(() => {
     const attendance = detail?.attendance;
     if (attendance?.status !== "IN_PROGRESS") return;
-    const updateElapsed = () => setElapsedSeconds(Math.max(0, Math.floor((Date.now() - new Date(attendance.createdAt).getTime()) / 1000)));
+    const updateElapsed = () => setElapsedSeconds(Math.max(0, Math.floor((Date.now() - new Date(attendance.startedAt).getTime()) / 1000)));
     updateElapsed();
     const timerId = window.setInterval(updateElapsed, 1000);
     return () => window.clearInterval(timerId);
-  }, [detail?.attendance?.createdAt, detail?.attendance?.status]);
+  }, [detail?.attendance?.startedAt, detail?.attendance?.status]);
 
   async function mutate(path: string, method: "POST" | "PATCH", body: object, successMessage: string): Promise<boolean> {
     setBusy(true);
@@ -137,8 +251,9 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
       );
       setDetail((current) => current && current.questions.some((question) => question.id === result.question.id)
         ? current
-        : current ? { ...current, questions: [...current.questions, result.question] } : current);
-      setSelectedQuestionIds((current) => current.includes(result.question.id) ? current : [...current, result.question.id]);
+        : current ? { ...current, questions: [result.question, ...current.questions] } : current);
+      setSelectedQuestionIds((current) => [result.question.id, ...current.filter((id) => id !== result.question.id)]);
+      setAnamnesisSaved(false);
       setNewQuestion("");
       setShowNewQuestion(false);
       setNotice("Pergunta adicionada e selecionada para esta anamnese.");
@@ -165,7 +280,7 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
         if (!["application/pdf", "image/jpeg", "image/png"].includes(contentType)) {
           throw new Error("Envie apenas arquivos PDF, JPG ou PNG.");
         }
-        await apiRequest(`/encounters/${appointmentId}/attachments`, {
+        const result = await apiRequest<{ attachment: EncounterDetails["attachments"][number] }>(`/encounters/${appointmentId}/attachments`, {
           method: "POST",
           body: JSON.stringify({
             type: item.type,
@@ -175,12 +290,16 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
             description: attachmentDescription.trim() || undefined,
           }),
         });
+        setDetail((current) => current
+          ? { ...current, attachments: [...current.attachments.filter((attachment) => attachment.id !== result.attachment.id), result.attachment] }
+          : current);
       }
       setExamFiles([]);
       setTongueFile(null);
+      if (examInputRef.current) examInputRef.current.value = "";
+      if (tongueInputRef.current) tongueInputRef.current.value = "";
       setAttachmentDescription("");
-      setNotice("Arquivos enviados para o atendimento.");
-      await load();
+      setNotice("Arquivos enviados e anexados ao atendimento.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Não foi possível enviar os arquivos.");
     } finally {
@@ -212,35 +331,41 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
     }
   }
 
-  function saveAnamnesis(event: FormEvent<HTMLFormElement>) {
+  async function saveAnamnesis(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!detail) return;
-    if (selectedQuestionIds.length === 0) {
-      setError("Selecione pelo menos uma pergunta para salvar a anamnese.");
-      return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    const answers = Object.fromEntries(
+      detail.questions
+        .filter((question) => selectedQuestionIds.includes(question.id))
+        .map((question) => [question.id, anamnesisForm.answers[question.id]?.trim() ?? ""]),
+    );
+    try {
+      const result = await apiRequest<{ id: string }>(
+        editingAnamnesisId
+          ? `/encounters/${appointmentId}/anamneses/${editingAnamnesisId}`
+          : `/encounters/${appointmentId}/anamneses`,
+        {
+          method: editingAnamnesisId ? "PATCH" : "POST",
+          body: JSON.stringify({ type: anamnesisForm.type, description: anamnesisForm.description, selectedQuestionIds, answers }),
+        },
+      );
+      setEditingAnamnesisId(result.id);
+      setAnamnesisSaved(true);
+      setNotice("Anamnese salva. Continue preenchendo e salve novamente para atualizar.");
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "NÃ£o foi possÃ­vel salvar a anamnese.");
+    } finally {
+      setBusy(false);
     }
-    const answers = detail.questions
-      .filter((question) => selectedQuestionIds.includes(question.id))
-      .map((question) => ({ questionId: question.id, answer: anamnesisForm.answers[question.id]?.trim() ?? "" }))
-      .filter((answer) => answer.answer.length > 0);
-    void mutate(
-      editingAnamnesisId
-        ? `/encounters/${appointmentId}/anamneses/${editingAnamnesisId}`
-        : `/encounters/${appointmentId}/anamneses`,
-      editingAnamnesisId ? "PATCH" : "POST",
-      { type: anamnesisForm.type, description: anamnesisForm.description, selectedQuestionIds, answers },
-      editingAnamnesisId ? "Anamnese atualizada." : "Anamnese salva.",
-    ).then((saved) => {
-      if (saved) {
-        setEditingAnamnesisId(null);
-        setSelectedQuestionIds([]);
-        setAnamnesisForm((current) => ({ ...current, description: "", answers: {} }));
-      }
-    });
   }
 
   function editAnamnesis(anamnesis: EncounterDetails["anamneses"][number]) {
     setEditingAnamnesisId(anamnesis.id);
+    setAnamnesisSaved(true);
     setSelectedQuestionIds(anamnesis.answers.map((answer) => answer.questionId));
     setAnamnesisForm({
       type: anamnesis.type,
@@ -316,10 +441,18 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
 
   const isTherapist = session.activeClinic.role === "THERAPIST";
   const canEdit = isTherapist && detail.attendance?.status === "IN_PROGRESS";
-  const canStart = isTherapist && !detail.attendance && detail.appointment.appointmentStatus === "CONFIRMED";
-  const filteredQuestions = detail.questions.filter((question) =>
-    question.description.toLocaleLowerCase("pt-BR").includes(questionSearch.trim().toLocaleLowerCase("pt-BR")),
+  const canStart = isTherapist && (
+    (!detail.attendance && detail.appointment.appointmentStatus === "CONFIRMED")
+    || detail.attendance?.status === "ACTIVE"
   );
+  const availableQuestions = detail.questions.filter((question) => !selectedQuestionIds.includes(question.id));
+  const filteredQuestions = [...availableQuestions]
+    .sort((first, second) => Number(second.id) - Number(first.id))
+    .filter((question) =>
+      question.description.toLocaleLowerCase("pt-BR").includes(questionSearch.trim().toLocaleLowerCase("pt-BR")),
+    );
+  const protocolGroups = groupProtocolsByDiagnosis(detail.protocols);
+  const evolutionGroups = groupEvolutionsByDiagnosisAndStage(detail.protocols, detail.evolutions);
   return (
     <div className="page-content">
       <button className="encounter-back-link" onClick={onBack}>← Voltar para atendimentos</button>
@@ -356,10 +489,17 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
         {tabs.map((item) => (
           <button
             key={item.id}
+            type="button"
             className={`encounter-tab ${tab === item.id ? "encounter-tab-active" : ""}`}
             role="tab"
+            id={`encounter-tab-${item.id}`}
+            aria-controls={`encounter-panel-${item.id}`}
             aria-selected={tab === item.id}
-            onClick={() => setTab(item.id)}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setTab(item.id);
+            }}
           >
             {item.label}
           </button>
@@ -367,7 +507,7 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
       </div>
 
       {tab === "anamnesis" && (
-        <section className="panel encounter-panel" role="tabpanel">
+        <section className="panel encounter-panel" id="encounter-panel-anamnesis" role="tabpanel" aria-labelledby="encounter-tab-anamnesis">
           <div className="panel-heading">
             <div><h2>Anamnese</h2><p className="muted">Queixa principal, descrição clínica e respostas às perguntas da terapia.</p></div>
           </div>
@@ -375,50 +515,61 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
             <form className="form-panel" onSubmit={saveAnamnesis}>
               <div className="form-grid">
                 {editingAnamnesisId && <div className="span-two edit-anamnesis-banner"><strong>Editando anamnese existente</strong><button type="button" className="button button-secondary" onClick={cancelAnamnesisEdit}>Cancelar edição</button></div>}
-                <label>Tipo<input required minLength={2} maxLength={100} value={anamnesisForm.type} onChange={(event) => setAnamnesisForm({ ...anamnesisForm, type: event.target.value })} /></label>
-                <label className="span-two">Queixa principal e descrição<textarea required minLength={2} maxLength={4000} rows={4} value={anamnesisForm.description} onChange={(event) => setAnamnesisForm({ ...anamnesisForm, description: event.target.value })} /></label>
+                <label>Tipo<input required minLength={2} maxLength={100} value={anamnesisForm.type} onChange={(event) => { setAnamnesisForm({ ...anamnesisForm, type: event.target.value }); setAnamnesisSaved(false); }} /></label>
+                <label className="span-two">Queixa principal e descrição<textarea required minLength={1} maxLength={4000} rows={4} value={anamnesisForm.description} onChange={(event) => { setAnamnesisForm({ ...anamnesisForm, description: event.target.value }); setAnamnesisSaved(false); }} /></label>
                 <div className="span-two anamnesis-question-picker">
                   <div className="question-picker-heading">
                     <div>
                       <strong>Gerenciador de perguntas</strong>
-                      <p className="field-hint">Selecione as perguntas existentes que farão parte desta anamnese.</p>
+                      <p className="field-hint">Selecione as perguntas existentes que farão parte desta anamnese.{availableQuestions.length > 9 ? ` Role a lista para consultar as ${availableQuestions.length} perguntas disponíveis.` : ""}</p>
                     </div>
                     <button type="button" className="button button-secondary" onClick={() => setShowNewQuestion((current) => !current)}>
-                      {showNewQuestion ? "Fechar cadastro" : "+ Adicionar nova pergunta"}
+                      {showNewQuestion ? "Cancelar Nova Pergunta" : "+ Adicionar nova pergunta"}
                     </button>
                   </div>
+                  {showNewQuestion && <div className="anamnesis-new-question">
+                    <label>Nova pergunta<input minLength={2} maxLength={500} value={newQuestion} onChange={(event) => setNewQuestion(event.target.value)} placeholder="Ex.: Como está sua qualidade do sono?" /></label>
+                    <button type="button" className="button button-secondary" disabled={busy || newQuestion.trim().length < 2} onClick={() => void createQuestion()}>{busy ? "Adicionando..." : "Criar pergunta"}</button>
+                  </div>}
                   <input className="question-search-input" value={questionSearch} onChange={(event) => setQuestionSearch(event.target.value)} placeholder="Buscar pergunta existente..." aria-label="Buscar pergunta existente" />
-                  {detail.questions.length === 0 ? <p className="empty-state">Nenhuma pergunta cadastrada para esta terapia.</p> : filteredQuestions.length === 0 ? <p className="empty-state">Nenhuma pergunta corresponde à busca.</p> : (
+                  {detail.questions.length === 0 ? <p className="empty-state">Nenhuma pergunta cadastrada para esta terapia.</p> : filteredQuestions.length === 0 ? <p className="empty-state">{questionSearch.trim() ? "Nenhuma pergunta corresponde à busca." : "Todas as perguntas disponíveis já foram escolhidas."}</p> : (
                     <div className="anamnesis-question-list">
                       {filteredQuestions.map((question) => (
                         <label className="checkbox-option" key={question.id}>
                           <input
                             type="checkbox"
                             checked={selectedQuestionIds.includes(question.id)}
-                            onChange={(event) => setSelectedQuestionIds((current) => event.target.checked
-                              ? [...current, question.id]
-                              : current.filter((id) => id !== question.id))}
+                            onChange={(event) => {
+                              setSelectedQuestionIds((current) => event.target.checked
+                                ? [...current, question.id]
+                                : current.filter((id) => id !== question.id));
+                              setAnamnesisSaved(false);
+                            }}
                           />
                           <span>{question.description}</span>
                         </label>
                       ))}
                     </div>
                   )}
-                  {showNewQuestion && <div className="anamnesis-new-question">
-                    <label>Nova pergunta<input required minLength={2} maxLength={500} value={newQuestion} onChange={(event) => setNewQuestion(event.target.value)} placeholder="Ex.: Como está sua qualidade do sono?" /></label>
-                    <button type="button" className="button button-secondary" disabled={busy || newQuestion.trim().length < 2} onClick={() => void createQuestion()}>{busy ? "Adicionando..." : "Criar pergunta"}</button>
-                  </div>}
                 </div>
-                {detail.questions.filter((question) => selectedQuestionIds.includes(question.id)).map((question) => (
-                  <label className="span-two" key={question.id}>{question.description}
-                    <textarea rows={2} value={anamnesisForm.answers[question.id] ?? ""} onChange={(event) => setAnamnesisForm({
-                      ...anamnesisForm,
-                      answers: { ...anamnesisForm.answers, [question.id]: event.target.value },
-                    })} />
-                  </label>
-                ))}
+                {selectedQuestionIds.length > 0 && <div className="span-two anamnesis-answer-list">
+                  {selectedQuestionIds.map((id) => detail.questions.find((question) => question.id === id)).filter((question): question is NonNullable<typeof question> => question !== undefined).map((question) => (
+                    <div className="anamnesis-answer-item" key={question.id}>
+                      <label className="anamnesis-answer-field">{question.description}
+                        <textarea rows={1} value={anamnesisForm.answers[question.id] ?? ""} onChange={(event) => {
+                          setAnamnesisForm({ ...anamnesisForm, answers: { ...anamnesisForm.answers, [question.id]: event.target.value } });
+                          setAnamnesisSaved(false);
+                        }} />
+                      </label>
+                      <button type="button" className="button button-quiet" onClick={() => {
+                        setSelectedQuestionIds((current) => current.filter((selectedId) => selectedId !== question.id));
+                        setAnamnesisSaved(false);
+                      }}>Remover</button>
+                    </div>
+                  ))}
+                </div>}
               </div>
-              <div className="encounter-form-actions"><button className="button button-primary" disabled={busy || selectedQuestionIds.length === 0}>{busy ? "Salvando..." : editingAnamnesisId ? "Atualizar anamnese" : "Salvar anamnese"}</button></div>
+              <div className="encounter-form-actions"><button className="button button-primary" disabled={busy || (editingAnamnesisId ? anamnesisSaved : anamnesisForm.description.trim().length === 0)}>{busy ? "Salvando..." : editingAnamnesisId ? "Atualizar anamnese" : "Salvar anamnese"}</button></div>
             </form>
           )}
           {detail.attendance && (
@@ -427,8 +578,8 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
                 <div><h3 id="attachments-title">Exames e fotos da língua</h3><p className="muted">Anexe documentos e imagens para apoiar a avaliação deste atendimento.</p></div>
               </div>
               {canEdit && <div className="attachment-upload-grid">
-                <label>Exames (PDF, JPG ou PNG)<input type="file" accept="application/pdf,image/jpeg,image/png" multiple disabled={busy} onChange={(event) => setExamFiles(Array.from(event.target.files ?? []))} /></label>
-                <label>Foto da língua (JPG ou PNG)<input type="file" accept="image/jpeg,image/png" disabled={busy} onChange={(event) => setTongueFile(event.target.files?.[0] ?? null)} /></label>
+                <label>Exames (PDF, JPG ou PNG)<input ref={examInputRef} type="file" accept="application/pdf,image/jpeg,image/png" multiple disabled={busy} onChange={(event) => setExamFiles(Array.from(event.target.files ?? []))} /></label>
+                <label>Foto da língua (JPG ou PNG)<input ref={tongueInputRef} type="file" accept="image/jpeg,image/png" disabled={busy} onChange={(event) => setTongueFile(event.target.files?.[0] ?? null)} /></label>
                 <label className="span-two">Observações<textarea rows={2} maxLength={1000} value={attachmentDescription} disabled={busy} onChange={(event) => setAttachmentDescription(event.target.value)} placeholder="Observações sobre os arquivos" /></label>
                 <div className="encounter-form-actions span-two"><button type="button" className="button button-primary" disabled={busy || (!examFiles.length && !tongueFile)} onClick={() => void uploadAttachments()}>{busy ? "Enviando..." : "Enviar arquivos"}</button></div>
               </div>}
@@ -461,7 +612,7 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
       )}
 
       {tab === "diagnosis" && (
-        <section className="panel encounter-panel" role="tabpanel">
+        <section className="panel encounter-panel" id="encounter-panel-diagnosis" role="tabpanel" aria-labelledby="encounter-tab-diagnosis">
           <div className="panel-heading"><div><h2>Diagnóstico</h2><p className="muted">Registros vinculados ao prontuário e a este atendimento.</p></div></div>
           {canEdit && (
             <form className="form-panel" onSubmit={saveDiagnosis}>
@@ -476,7 +627,7 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
             <div className="encounter-record-list">
               {detail.diagnoses.map((item) => (
                 <article className="encounter-record-card" key={item.id}>
-                  <div className="record-topline"><span className="soft-badge">Diagnóstico</span><span className="muted">{new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium" }).format(new Date(`${item.diagnosedAt}T12:00:00`))}</span></div>
+                  <div className="record-topline"><span className="soft-badge">Diagnóstico</span><span className="muted">{formatClinicalDate(item.diagnosedAt)}</span></div>
                   <p className="encounter-record-description">{item.description}</p>
                 </article>
               ))}
@@ -486,7 +637,7 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
       )}
 
       {tab === "protocol" && (
-        <section className="panel encounter-panel" role="tabpanel">
+        <section className="panel encounter-panel" id="encounter-panel-protocol" role="tabpanel" aria-labelledby="encounter-tab-protocol">
           <div className="panel-heading"><div><h2>Protocolo e etapas</h2><p className="muted">Vincule um protocolo à hipótese diagnóstica e acompanhe suas etapas.</p></div></div>
           {canEdit && (
             <form className="encounter-attach-form" onSubmit={attachProtocol}>
@@ -502,24 +653,39 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
               {detail.protocolOptions.length === 0 && <p className="field-hint">Não há protocolos ativos cadastrados para esta terapia.</p>}
             </form>
           )}
-          {detail.protocols.length === 0 ? <p className="empty-state">Nenhuma etapa de protocolo vinculada a este atendimento.</p> : (
-            <div className="encounter-stage-list">
-              {detail.protocols.map((item) => (
-                <article className="encounter-stage-card" key={item.diagnosisProtocolId}>
-                  <div className="encounter-stage-heading">
-                    <div><span className="eyebrow">Etapa {item.sequence}</span><h3>{item.stepDescription}</h3><p className="muted">{item.protocolName} · Diagnóstico: {item.diagnosisDescription}</p></div>
-                    <span className={`status-pill status-${item.status.toLowerCase()}`}>{stageStatusLabels[item.status]}</span>
-                  </div>
-                  {(item.startsAt || item.endsAt) && <p className="muted">Período: {item.startsAt ?? "—"} a {item.endsAt ?? "—"}</p>}
-                  {item.stepNotes && <p className="encounter-record-description">{item.stepNotes}</p>}
-                  {canEdit && (
-                    <label className="encounter-status-field">Status da etapa
-                      <select value={item.status} disabled={busy} onChange={(event) => updateStage(item.diagnosisProtocolId, event.target.value as keyof typeof stageStatusLabels)}>
-                        {Object.entries(stageStatusLabels).map(([status, label]) => <option key={status} value={status}>{label}</option>)}
-                      </select>
-                    </label>
-                  )}
-                </article>
+          {protocolGroups.length === 0 ? <p className="empty-state">Nenhuma etapa de protocolo vinculada a este atendimento.</p> : (
+            <div className="encounter-diagnosis-protocol-list">
+              {protocolGroups.map((diagnosis) => (
+                <section className="encounter-diagnosis-protocol-group" key={diagnosis.diagnosisId}>
+                  <header className="encounter-diagnosis-protocol-heading">
+                    <div className="record-topline"><span className="soft-badge">Diagnóstico</span><span className="muted">{formatClinicalDate(diagnosis.diagnosedAt)}</span></div>
+                    <p className="encounter-record-description">{diagnosis.diagnosisDescription}</p>
+                  </header>
+                  {diagnosis.protocols.map((protocol) => (
+                    <section className="encounter-linked-protocol" key={protocol.protocolId}>
+                      <h3>{protocol.protocolName}</h3>
+                      <div className="encounter-stage-list">
+                        {protocol.stages.map((item) => (
+                          <article className="encounter-stage-card" key={item.diagnosisProtocolId}>
+                            <div className="encounter-stage-heading">
+                              <div><span className="eyebrow">Etapa {item.sequence}</span><h4>{item.stepDescription}</h4></div>
+                              <span className={`status-pill status-${item.status.toLowerCase()}`}>{stageStatusLabels[item.status]}</span>
+                            </div>
+                            {(item.startsAt || item.endsAt) && <p className="muted">Período: {item.startsAt ?? "—"} a {item.endsAt ?? "—"}</p>}
+                            {item.stepNotes && <p className="encounter-record-description">{item.stepNotes}</p>}
+                            {canEdit && (
+                              <label className="encounter-status-field">Status da etapa
+                                <select value={item.status} disabled={busy} onChange={(event) => updateStage(item.diagnosisProtocolId, event.target.value as keyof typeof stageStatusLabels)}>
+                                  {Object.entries(stageStatusLabels).map(([status, label]) => <option key={status} value={status}>{label}</option>)}
+                                </select>
+                              </label>
+                            )}
+                          </article>
+                        ))}
+                      </div>
+                    </section>
+                  ))}
+                </section>
               ))}
             </div>
           )}
@@ -539,7 +705,7 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
       )}
 
       {tab === "evolutions" && (
-        <section className="panel encounter-panel" role="tabpanel">
+        <section className="panel encounter-panel" id="encounter-panel-evolutions" role="tabpanel" aria-labelledby="encounter-tab-evolutions">
           <div className="panel-heading"><div><h2>Evoluções</h2><p className="muted">Registre a evolução clínica associada a uma etapa do protocolo.</p></div></div>
           {canEdit && (
             <form className="form-panel" onSubmit={saveEvolution}>
@@ -557,14 +723,39 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
               {detail.protocols.length === 0 && <p className="field-hint">Vincule um protocolo com etapas antes de registrar evoluções.</p>}
             </form>
           )}
-          {detail.evolutions.length === 0 ? <p className="empty-state">Nenhuma evolução registrada.</p> : (
-            <div className="encounter-timeline">
-              {detail.evolutions.map((item) => (
-                <article className="encounter-timeline-item" key={item.id}>
-                  <div className="record-topline"><span className="soft-badge">{item.protocolName} · Etapa {item.sequence}</span><span className={`status-pill status-${item.status.toLowerCase()}`}>{evolutionStatusLabels[item.status]}</span></div>
-                  <p className="encounter-record-description">{item.description}</p>
-                  <span className="muted">{new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium" }).format(new Date(`${item.evolvedAt}T12:00:00`))} · Por {item.authorName}</span>
-                </article>
+          {evolutionGroups.length === 0 ? <p className="empty-state">Nenhuma etapa de protocolo vinculada a um diagnóstico.</p> : (
+            <div className="encounter-evolution-diagnoses">
+              {evolutionGroups.map((diagnosis) => (
+                <section className="encounter-evolution-diagnosis" key={diagnosis.diagnosisId}>
+                  <header className="encounter-diagnosis-protocol-heading">
+                    <div className="record-topline"><span className="soft-badge">Diagnóstico</span><span className="muted">{formatClinicalDate(diagnosis.diagnosedAt)}</span></div>
+                    <p className="encounter-record-description">{diagnosis.diagnosisDescription}</p>
+                  </header>
+                  {diagnosis.protocols.map((protocol) => (
+                    <section className="encounter-evolution-protocol" key={protocol.protocolId}>
+                      <h3>{protocol.protocolName}</h3>
+                      {protocol.stages.map((stage) => (
+                        <section className="encounter-evolution-stage" key={stage.diagnosisProtocolId}>
+                          <div className="encounter-stage-heading">
+                            <div><span className="eyebrow">Etapa {stage.sequence}</span><h4>{stage.stepDescription}</h4><span className="muted">Início da etapa: {formatClinicalDate(stage.startsAt)}</span></div>
+                            <span className={`status-pill status-${stage.status.toLowerCase()}`}>{stageStatusLabels[stage.status]}</span>
+                          </div>
+                          {stage.evolutions.length === 0 ? <p className="empty-state">Ainda não há evoluções registradas para esta etapa.</p> : (
+                            <div className="encounter-stage-evolutions">
+                              {stage.evolutions.map((item) => (
+                                <article className="encounter-timeline-item" key={item.id}>
+                                  <div className="record-topline"><span className="soft-badge">Evolução</span><span className={`status-pill status-${String(item.status ?? "unknown").toLowerCase()}`}>{evolutionStatusLabels[item.status] ?? "Status não informado"}</span></div>
+                                  <p className="encounter-record-description">{item.description}</p>
+                                  <span className="muted">{formatClinicalDate(item.evolvedAt)} · Por {item.authorName}</span>
+                                </article>
+                              ))}
+                            </div>
+                          )}
+                        </section>
+                      ))}
+                    </section>
+                  ))}
+                </section>
               ))}
             </div>
           )}

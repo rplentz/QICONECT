@@ -21,7 +21,13 @@ export function migrateDatabase(database: Database.Database): void {
     "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' LIMIT 1",
   ).get());
   const version = (database.pragma("user_version") as Array<{ user_version: number }>)[0]?.user_version ?? 0;
-  if (!hasHistory && version === 1) return;
+  if (!hasHistory && version === 1) {
+    const attendanceColumns = database.pragma('table_info("ATENDIMENTO")') as Array<{ name: string }>;
+    if (attendanceColumns.length > 0 && !attendanceColumns.some((column) => column.name === "dt_inicio_real")) {
+      database.exec("ALTER TABLE ATENDIMENTO ADD COLUMN dt_inicio_real TEXT");
+    }
+    return;
+  }
 
   if (hasHistory) applyLegacyMigrations(database);
   applyWorkbookSchema(database, hasTables || hasHistory);

@@ -50,7 +50,16 @@ export function importLegacyData(db: Database.Database, data: Snapshot): void {
   for(const [index,row] of rows("EVOLUCAO").entries())insert("INSERT INTO EVOLUCAO(id,diagnostico_protocolo_id,descricao,dt_evolucao,status) VALUES(?,?,?,?,?)",index+1,mapped(diagnosisProtocolMap,row.diagnostico_protocolo_id),row.descricao??"",row.dt_evolucao??null,statusId(row.status,7));
   for(const [index,row] of rows("AGENDA").entries())insert("INSERT INTO AGENDA(id,paciente_id,terapeuta_id,terapia_id,dt_inicio,dt_fim,status) VALUES(?,?,?,?,?,?,?)",index+1,mapped(patientMap,row.paciente_id),mapped(therapistMap,row.terapeuta_id),mapped(therapyMap,row.terapia_id),row.dt_inicio,row.dt_fim,statusId(row.status,3));
   const attendanceRows=rows("ATENDIMENTO");
-  for(const [index,row] of attendanceRows.entries())insert("INSERT INTO ATENDIMENTO(id,paciente_id,terapeuta_id,terapia_id,dt_atend,status) VALUES(?,?,?,?,?,?)",index+1,mapped(patientMap,row.paciente_id),mapped(therapistMap,row.terapeuta_id),mapped(therapyMap,row.terapia_id),row.dt_atend,statusId(row.status,7));
+  for(const [index,row] of attendanceRows.entries()){
+    const status=statusId(row.status,7);
+    const firstClinicalEntry=rows("ANAMNESE")
+      .filter((anamnesis)=>String(anamnesis.atendimento_id)===String(row.id))
+      .map((anamnesis)=>anamnesis.dt_registro??anamnesis.created_at)
+      .filter(Boolean)
+      .sort()[0]??null;
+    const startedAt=row.dt_inicio_real??(status===7?(firstClinicalEntry??new Date().toISOString()):null);
+    insert("INSERT INTO ATENDIMENTO(id,paciente_id,terapeuta_id,terapia_id,dt_atend,status,dt_inicio_real) VALUES(?,?,?,?,?,?,?)",index+1,mapped(patientMap,row.paciente_id),mapped(therapistMap,row.terapeuta_id),mapped(therapyMap,row.terapia_id),row.dt_atend,status,startedAt);
+  }
   const chartRows=rows("PRONTUARIO");const chartBySource=new Map(chartRows.map(r=>[String(r.id),r]));
   for(const [index,attendance] of attendanceRows.entries()){
     const sourceChart=chartRows.find(c=>String(c.paciente_id??"")===String(attendance.paciente_id??"")||String(c.patient_membership_id??"")===String(attendance.patient_membership_id??""));
