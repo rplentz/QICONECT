@@ -12,7 +12,7 @@ export function RecordsPage({ session }: Props) {
     <section className="panel"><div className="panel-heading"><div><h2>{isTherapist?"Evoluções dos pacientes":"Evoluções do seu prontuário"}</h2><p className="muted">As evoluções são registradas dentro do atendimento correspondente.</p></div><span className="soft-badge">{records.length} registros</span></div>
       {records.length===0?<p className="empty-state">Nenhuma evolução encontrada.</p>:<div className="record-list">{records.map(record=><article className="record-card" key={record.id}>
         <div className="record-topline"><span className="soft-badge">Evolução</span><span className="muted">{record.createdAt?new Intl.DateTimeFormat("pt-BR",{dateStyle:"medium",timeStyle:"short"}).format(new Date(record.createdAt)):""}</span></div>
-        {record.patientName&&<p className="muted">Paciente: {record.patientName}</p>}<h3>{record.title}</h3><p>{String(record.content.observacao??"")}</p><div className="record-footer"><span className="status-pill status-confirmed">Disponível no prontuário</span><span className="muted">Por {record.authorName}</span></div>
+        {record.patientName&&<p className="record-patient-name"><span>Paciente</span><strong>{record.patientName}</strong></p>}<h3>{record.title}</h3><p>{String(record.content.observacao??"")}</p><div className="record-footer"><span className="status-pill status-confirmed">Disponível no prontuário</span><span className="muted">Por {record.authorName}</span></div>
       </article>)}</div>}
     </section>
   </div>;

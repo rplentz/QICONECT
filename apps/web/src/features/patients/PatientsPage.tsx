@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { apiRequest, type Patient, type Session } from "../../lib/api.js";
+import { apiRequest, type EncounterSummary, type Patient, type Session } from "../../lib/api.js";
 
 interface PatientsPageProps {
   session: Session;
@@ -7,6 +7,8 @@ interface PatientsPageProps {
   onSelectPatient: (patientId: string) => void;
   onClearSelection: () => void;
   onOpenEncounters: (patientId: string) => void;
+  onOpenEncounter: (appointmentId: string) => void;
+  title?: string;
 }
 
 const emptyForm = { fullName: "", email: "", phone: "", password: "", birthDate: "", cpf: "" };
@@ -38,8 +40,10 @@ function displayPhone(value: string | null | undefined) {
   return value ? formatPhone(value) : "—";
 }
 
-export function PatientsPage({ session, selectedPatientId, onSelectPatient, onClearSelection, onOpenEncounters }: PatientsPageProps) {
+export function PatientsPage({ session, selectedPatientId, onSelectPatient, onClearSelection, onOpenEncounters, onOpenEncounter, title }: PatientsPageProps) {
   const [patients, setPatients] = useState<Patient[]>([]);
+  const [patientEncounters, setPatientEncounters] = useState<EncounterSummary[]>([]);
+  const [encountersLoading, setEncountersLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [form, setForm] = useState(emptyForm);
   const [showForm, setShowForm] = useState(false);
@@ -52,12 +56,22 @@ export function PatientsPage({ session, selectedPatientId, onSelectPatient, onCl
   async function loadPatients(searchTerm = search) {
     const query = searchTerm ? `?search=${encodeURIComponent(searchTerm)}` : "";
     const result = await apiRequest<{ patients: Patient[] }>(`/patients${query}`);
-    setPatients(result.patients);
+    setPatients(result.patients.map((patient) => ({ ...patient, id: String(patient.id) })));
   }
 
   useEffect(() => {
     loadPatients().catch((reason: Error) => setError(reason.message));
   }, []);
+
+  useEffect(() => {
+    if (!selectedPatientId || !canManage) { setPatientEncounters([]); return; }
+    let active = true; setEncountersLoading(true);
+    apiRequest<{ encounters: EncounterSummary[] }>("/encounters")
+      .then(({ encounters }) => { if (active) setPatientEncounters(encounters.filter((item) => String(item.patientId) === String(selectedPatientId))); })
+      .catch((reason: Error) => { if (active) setError(reason.message); })
+      .finally(() => { if (active) setEncountersLoading(false); });
+    return () => { active = false; };
+  }, [selectedPatientId, canManage]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -109,7 +123,7 @@ export function PatientsPage({ session, selectedPatientId, onSelectPatient, onCl
       <div className="page-heading">
         <div>
           <p className="eyebrow">Relacionamento clínico</p>
-          <h1>{canManage ? "Pacientes" : "Meu cadastro"}</h1>
+          <h1>{title ?? (canManage ? "Pacientes" : "Meu cadastro")}</h1>
           <p className="muted">Dados pessoais e vínculos na clínica selecionada.</p>
         </div>
         {canManage && (
@@ -139,6 +153,15 @@ export function PatientsPage({ session, selectedPatientId, onSelectPatient, onCl
           {canManage && <button className="button button-secondary" onClick={() => onOpenEncounters(selectedPatient.id)}>Ver atendimentos</button>}
         </section>
       )}
+      {canManage && selectedPatient && <section className="panel patient-encounters-panel" id="patient-encounters">
+        <div className="panel-heading"><div><h2>Atendimentos de {selectedPatient.fullName}</h2><p className="muted">Histórico e próximos atendimentos deste paciente.</p></div><span className="soft-badge">{patientEncounters.length} {patientEncounters.length === 1 ? "atendimento" : "atendimentos"}</span></div>
+        {encountersLoading ? <p className="empty-state">Carregando atendimentos...</p> : patientEncounters.length === 0 ? <p className="empty-state">Nenhum atendimento encontrado para este paciente.</p> : <div className="patient-encounter-list">{patientEncounters.map((item) => <article className="patient-encounter-row" key={item.appointmentId}>
+          <div className="appointment-date"><strong>{new Intl.DateTimeFormat("pt-BR", { day: "2-digit" }).format(new Date(item.startsAt))}</strong><span>{new Intl.DateTimeFormat("pt-BR", { month: "short" }).format(new Date(item.startsAt)).replace(".", "")}</span></div>
+          <div className="patient-encounter-main"><strong>{item.therapyName}</strong><span>{new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(item.startsAt))}</span><small>Terapeuta: {item.therapistName}</small></div>
+          <span className={`status-pill status-${item.appointmentStatus.toLowerCase()}`}>{item.appointmentStatus === "IN_PROGRESS" ? "Em atendimento" : item.appointmentStatus === "CONFIRMED" ? "Confirmado" : item.appointmentStatus === "CANCELLED" ? "Cancelado" : item.appointmentStatus === "RESCHEDULED" ? "Remarcado" : item.appointmentStatus}</span>
+          <button type="button" className="button button-secondary" onClick={() => onOpenEncounter(item.appointmentId)}>Acessar atendimento</button>
+        </article>)}</div>}
+      </section>}
       {!canManage && patients[0] ? (
         <section className="panel profile-update-panel">
           <div className="panel-heading">
@@ -175,7 +198,7 @@ export function PatientsPage({ session, selectedPatientId, onSelectPatient, onCl
           <button className="button button-primary">Salvar paciente</button>
         </form>
       ) : null}
-      {canManage && <section className="panel">
+      {canManage && !selectedPatient && <section className="panel">
         <div className="panel-heading">
           <div><h2>{patients.length} {patients.length === 1 ? "paciente" : "pacientes"}</h2><p className="muted">Cadastros ativos desta clínica.</p></div>
           {canManage && <input className="search-input" placeholder="Buscar paciente..." value={search} onChange={(event) => { setSearch(event.target.value); loadPatients(event.target.value).catch((reason: Error) => setError(reason.message)); }} />}

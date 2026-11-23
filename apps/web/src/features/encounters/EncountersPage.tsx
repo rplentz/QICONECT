@@ -21,9 +21,9 @@ export function EncountersPage({ session, patientId, onOpen }: EncountersPagePro
 
   useEffect(() => {
     apiRequest<{ encounters: EncounterSummary[] }>("/encounters")
-      .then(({ encounters: items }) => setEncounters(patientId ? items.filter((item) => item.patientId === patientId) : items))
+      .then(({ encounters: items }) => setEncounters(patientId ? items.filter((item) => String(item.patientId) === String(patientId)) : items))
       .catch((reason: Error) => setError(reason.message));
-  }, []);
+  }, [patientId]);
 
   const isPatient = session.activeClinic.role === "PATIENT";
 

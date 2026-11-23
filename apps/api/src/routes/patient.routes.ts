@@ -15,9 +15,14 @@ patientRouter.get("/patients", requireAuth, (request, response) => {
   const auth = getAuth(request);
   const search = z.string().trim().max(100).optional().parse(request.query.search);
   const filterSelf = auth.role === "PATIENT" ? " AND p.usuario_id=?" : "";
-  const rows = db.prepare(`${patientSelect} WHERE p.clinica_id=?${filterSelf}
+  const therapistFilter = auth.role === "THERAPIST" ? ` AND (
+    EXISTS (SELECT 1 FROM AGENDA ag WHERE ag.paciente_id=p.id AND ag.status<>4 AND ag.terapeuta_id=?)
+    OR EXISTS (SELECT 1 FROM ATENDIMENTO at WHERE at.paciente_id=p.id)
+  )` : "";
+  const therapistId = auth.role === "THERAPIST" ? Number(db.prepare("SELECT id FROM TERAPEUTA WHERE usuario_id=?").pluck().get(Number(auth.userId))) : null;
+  const rows = db.prepare(`${patientSelect} WHERE p.clinica_id=?${filterSelf}${therapistFilter}
     AND (? IS NULL OR u.nome LIKE ? OR u.email LIKE ? OR p.cpf LIKE ?) ORDER BY u.nome LIMIT 200`)
-    .all(Number(auth.clinicId), ...(auth.role === "PATIENT" ? [Number(auth.userId)] : []), search ?? null,
+    .all(Number(auth.clinicId), ...(auth.role === "PATIENT" ? [Number(auth.userId)] : []), ...(auth.role === "THERAPIST" ? [therapistId] : []), search ?? null,
       search ? `%${search}%` : null, search ? `%${search}%` : null, search ? `%${search}%` : null);
   response.json({ patients: rows });
 });

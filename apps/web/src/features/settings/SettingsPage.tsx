@@ -9,6 +9,7 @@ interface Specialty {
 interface SettingsPageProps {
   session: Session;
 }
+interface Availability { id: string; therapistId: string; therapistName: string; weekday: number; startsAt: string; endsAt: string }
 
 const weekdays = [
   { value: 1, label: "Segunda-feira" },
@@ -24,6 +25,8 @@ export function SettingsPage({ session }: SettingsPageProps) {
   const [specialties, setSpecialties] = useState<Specialty[]>([]);
   const [therapies, setTherapies] = useState<Therapy[]>([]);
   const [therapists, setTherapists] = useState<Therapist[]>([]);
+  const [availabilities, setAvailabilities] = useState<Availability[]>([]);
+  const [editingAvailabilityId, setEditingAvailabilityId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [specialtyName, setSpecialtyName] = useState("");
@@ -52,6 +55,8 @@ export function SettingsPage({ session }: SettingsPageProps) {
     setSpecialties(catalog.specialties);
     setTherapies(catalog.therapies);
     setTherapists(therapistResult.therapists);
+    const availabilityResult = await apiRequest<{ availability: Availability[] }>("/availability");
+    setAvailabilities(availabilityResult.availability);
     if (catalog.specialties.length > 0) {
       setTherapy((value) => ({ ...value, specialtyId: value.specialtyId || catalog.specialties[0].id }));
     }
@@ -70,12 +75,13 @@ export function SettingsPage({ session }: SettingsPageProps) {
     path: string,
     body: Record<string, unknown>,
     onSuccess: () => void,
+    method = "POST",
   ) {
     event.preventDefault();
     setError("");
     setNotice("");
     try {
-      await apiRequest(path, { method: "POST", body: JSON.stringify(body) });
+      await apiRequest(path, { method, body: JSON.stringify(body) });
       onSuccess();
       setNotice("Alterações salvas.");
       await load();
@@ -152,10 +158,10 @@ export function SettingsPage({ session }: SettingsPageProps) {
           </form>
         </section>
       )}
-      <form className="panel form-panel" onSubmit={(event) => submit(event, "/availability", {
+      <form className="panel form-panel" onSubmit={(event) => submit(event, editingAvailabilityId ? `/availability/${editingAvailabilityId}` : "/availability", {
         ...availability,
         weekday: Number(availability.weekday),
-      }, () => undefined)}>
+      }, () => { setEditingAvailabilityId(null); setAvailability((value) => ({ ...value, weekday: "1", startsAt: "08:00", endsAt: "18:00" })); }, editingAvailabilityId ? "PUT" : "POST")}>
         <div><h2>Disponibilidade semanal</h2><p className="muted">Os agendamentos só serão aceitos dentro destes horários.</p></div>
         <div className="form-grid">
           {isAdmin && <label>Terapeuta<select required value={availability.therapistId} onChange={(event) => setAvailability({ ...availability, therapistId: event.target.value })}>
@@ -167,8 +173,15 @@ export function SettingsPage({ session }: SettingsPageProps) {
           <label>Início<input required type="time" value={availability.startsAt} onChange={(event) => setAvailability({ ...availability, startsAt: event.target.value })} /></label>
           <label>Fim<input required type="time" value={availability.endsAt} onChange={(event) => setAvailability({ ...availability, endsAt: event.target.value })} /></label>
         </div>
-        <button className="button button-primary">Adicionar horário disponível</button>
+        <div className="availability-form-actions">{editingAvailabilityId && <button type="button" className="button button-secondary" onClick={() => { setEditingAvailabilityId(null); setAvailability((value) => ({ ...value, weekday: "1", startsAt: "08:00", endsAt: "18:00" })); }}>Cancelar edição</button>}<button className="button button-primary">{editingAvailabilityId ? "Salvar alterações" : "Adicionar horário disponível"}</button></div>
       </form>
+      <section className="panel availability-list-panel">
+        <div className="panel-heading"><div><h2>Horários cadastrados</h2><p className="muted">Edite ou exclua suas disponibilidades.</p></div></div>
+        {availabilities.length === 0 ? <p className="empty-state">Nenhum horário cadastrado.</p> : <div className="availability-list-scroll"><div className="availability-list-grid">{availabilities.map((item) => <article className="availability-card" key={item.id}>
+          <div><span className="field-hint">{weekdays.find((day) => day.value === item.weekday)?.label ?? "Dia não definido"}</span><strong>{item.startsAt} – {item.endsAt}</strong>{isAdmin && <small>{item.therapistName}</small>}</div>
+          <div className="availability-card-actions"><button type="button" className="button button-secondary" onClick={() => { setEditingAvailabilityId(item.id); setAvailability({ therapistId: item.therapistId, weekday: String(item.weekday), startsAt: item.startsAt, endsAt: item.endsAt }); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Alterar</button><button type="button" className="button button-quiet" onClick={() => { void apiRequest(`/availability/${item.id}`, { method: "DELETE" }).then(() => { setNotice("Horário excluído."); setError(""); return load(); }).catch((reason) => setError(reason instanceof Error ? reason.message : "Não foi possível excluir o horário.")); }}>Excluir</button></div>
+        </article>)}</div></div>}
+      </section>
       <section className="panel">
         <div className="panel-heading"><div><h2>Catálogo ativo</h2><p className="muted">Serviços configurados nesta clínica.</p></div></div>
         <div className="table-wrap">

@@ -23,9 +23,8 @@ export function migrateDatabase(database: Database.Database): void {
   const version = (database.pragma("user_version") as Array<{ user_version: number }>)[0]?.user_version ?? 0;
   if (!hasHistory && version === 1) {
     const attendanceColumns = database.pragma('table_info("ATENDIMENTO")') as Array<{ name: string }>;
-    if (attendanceColumns.length > 0 && !attendanceColumns.some((column) => column.name === "dt_inicio_real")) {
-      database.exec("ALTER TABLE ATENDIMENTO ADD COLUMN dt_inicio_real TEXT");
-    }
+    if (attendanceColumns.length > 0 && !attendanceColumns.some((column) => column.name === "dt_inicio_real")) database.exec("ALTER TABLE ATENDIMENTO ADD COLUMN dt_inicio_real TEXT");
+    if (attendanceColumns.length > 0 && !attendanceColumns.some((column) => column.name === "exames_solicitados")) database.exec("ALTER TABLE ATENDIMENTO ADD COLUMN exames_solicitados INTEGER NOT NULL DEFAULT 0");
     return;
   }
 

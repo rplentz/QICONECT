@@ -186,7 +186,10 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
   const [attachmentDescription, setAttachmentDescription] = useState("");
   const [anamnesisForm, setAnamnesisForm] = useState({ type: "Anamnese clínica", description: "", answers: {} as Record<string, string> });
   const [diagnosisForm, setDiagnosisForm] = useState({ description: "", diagnosedAt: today() });
+  const [patientAnswers, setPatientAnswers] = useState<Record<string, Record<string, string>>>({});
   const [protocolForm, setProtocolForm] = useState({ diagnosisId: "", protocolId: "" });
+  const [showProtocolCreateForm, setShowProtocolCreateForm] = useState(false);
+  const [newProtocolForm, setNewProtocolForm] = useState({ name: "", symptoms: "", objective: "", firstStep: "" });
   const [evolutionForm, setEvolutionForm] = useState({
     diagnosisProtocolId: "",
     description: "",
@@ -197,6 +200,7 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
   async function load() {
     const result = await apiRequest<EncounterDetails>(`/encounters/${appointmentId}`);
     setDetail(result);
+    if (session.activeClinic.role === "PATIENT") setPatientAnswers(Object.fromEntries(result.anamneses.map((item) => [item.id, Object.fromEntries(item.answers.map((answer) => [answer.questionId, answer.answer ?? ""]))])));
     setProtocolForm((current) => ({
       ...current,
       diagnosisId: current.diagnosisId || result.diagnoses[0]?.id || "",
@@ -264,8 +268,18 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
     }
   }
 
+  async function requestAttachments() {
+    if (!detail || !canEdit) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      await apiRequest(`/encounters/${appointmentId}/exam-request`, { method: "POST" });
+      setNotice("Solicitação de exames e fotos enviada ao paciente."); await load();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Não foi possível solicitar os arquivos."); }
+    finally { setBusy(false); }
+  }
+
   async function uploadAttachments() {
-    if (!detail || !canEdit || (!examFiles.length && !tongueFile)) return;
+    if (!detail || !canUploadAttachments || (!examFiles.length && !tongueFile)) return;
     setBusy(true);
     setError("");
     setNotice("");
@@ -363,6 +377,15 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
     }
   }
 
+  async function savePatientAnswers(event: FormEvent<HTMLFormElement>, anamnesisId: string) {
+    event.preventDefault(); setBusy(true); setError(""); setNotice("");
+    try {
+      await apiRequest(`/encounters/${appointmentId}/anamneses/${anamnesisId}/answers`, { method: "PATCH", body: JSON.stringify({ answers: patientAnswers[anamnesisId] ?? {} }) });
+      setNotice("Suas respostas foram salvas."); await load();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Não foi possível salvar suas respostas."); }
+    finally { setBusy(false); }
+  }
+
   function editAnamnesis(anamnesis: EncounterDetails["anamneses"][number]) {
     setEditingAnamnesisId(anamnesis.id);
     setAnamnesisSaved(true);
@@ -406,6 +429,12 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
     );
   }
 
+  function createProtocol(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void mutate(`/encounters/${appointmentId}/protocol-catalog`, "POST", newProtocolForm, "Protocolo cadastrado com etapa inicial para esta terapia.")
+      .then((saved) => { if (saved) { setNewProtocolForm({ name: "", symptoms: "", objective: "", firstStep: "" }); setShowProtocolCreateForm(false); } });
+  }
+
   function updateStage(diagnosisProtocolId: string, status: keyof typeof stageStatusLabels) {
     void mutate(
       `/encounters/${appointmentId}/protocol-stages/${diagnosisProtocolId}`,
@@ -441,6 +470,7 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
 
   const isTherapist = session.activeClinic.role === "THERAPIST";
   const canEdit = isTherapist && detail.attendance?.status === "IN_PROGRESS";
+  const canUploadAttachments = canEdit || (session.activeClinic.role === "PATIENT" && detail.attendance?.examRequested === true);
   const canStart = isTherapist && (
     (!detail.attendance && detail.appointment.appointmentStatus === "CONFIRMED")
     || detail.attendance?.status === "ACTIVE"
@@ -576,13 +606,15 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
             <section className="encounter-attachments-panel" aria-labelledby="attachments-title">
               <div className="panel-heading">
                 <div><h3 id="attachments-title">Exames e fotos da língua</h3><p className="muted">Anexe documentos e imagens para apoiar a avaliação deste atendimento.</p></div>
+                {canEdit && <button type="button" className="button button-secondary" disabled={busy || detail.attendance.examRequested} onClick={() => void requestAttachments()}>{detail.attendance.examRequested ? "Exames e fotos solicitados" : "Solicitar Exames e fotos"}</button>}
               </div>
-              {canEdit && <div className="attachment-upload-grid">
+              {canUploadAttachments && <div className="attachment-upload-grid">
                 <label>Exames (PDF, JPG ou PNG)<input ref={examInputRef} type="file" accept="application/pdf,image/jpeg,image/png" multiple disabled={busy} onChange={(event) => setExamFiles(Array.from(event.target.files ?? []))} /></label>
                 <label>Foto da língua (JPG ou PNG)<input ref={tongueInputRef} type="file" accept="image/jpeg,image/png" disabled={busy} onChange={(event) => setTongueFile(event.target.files?.[0] ?? null)} /></label>
                 <label className="span-two">Observações<textarea rows={2} maxLength={1000} value={attachmentDescription} disabled={busy} onChange={(event) => setAttachmentDescription(event.target.value)} placeholder="Observações sobre os arquivos" /></label>
                 <div className="encounter-form-actions span-two"><button type="button" className="button button-primary" disabled={busy || (!examFiles.length && !tongueFile)} onClick={() => void uploadAttachments()}>{busy ? "Enviando..." : "Enviar arquivos"}</button></div>
               </div>}
+              {session.activeClinic.role === "PATIENT" && !detail.attendance.examRequested && <p className="notice-card">A terapeuta ainda não solicitou exames ou fotos para este atendimento.</p>}
               {detail.attachments.length === 0 ? <p className="empty-state">Nenhum arquivo anexado a este atendimento.</p> : (
                 <div className="attachment-list">
                   {detail.attachments.map((attachment) => (
@@ -602,7 +634,14 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
                 <article className="encounter-record-card encounter-record-card-clickable" key={item.id} onClick={() => canEdit && editAnamnesis(item)} onKeyDown={(event) => { if (canEdit && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); editAnamnesis(item); } }} role={canEdit ? "button" : undefined} tabIndex={canEdit ? 0 : undefined}>
                   <div className="record-topline"><span className="soft-badge">{item.type}</span><span className="muted">{formatDate(item.registeredAt)}</span></div>
                   <p className="encounter-record-description">{item.description}</p>
-                  {item.answers.map((answer) => <p className="encounter-answer" key={answer.questionId}><strong>{answer.question}</strong><span>{answer.answer}</span></p>)}
+                  {session.activeClinic.role === "PATIENT" && item.answers.length > 0 ? <form className="patient-anamnesis-answers" onSubmit={(event) => void savePatientAnswers(event, item.id)}>
+                    {item.answers.map((answer) => (
+                      <label className="anamnesis-answer-field" key={answer.questionId}>{answer.question}
+                        <textarea rows={2} maxLength={4000} value={patientAnswers[item.id]?.[answer.questionId] ?? answer.answer ?? ""} onChange={(event) => setPatientAnswers((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? {}), [answer.questionId]: event.target.value } }))} />
+                      </label>
+                    ))}
+                    <div className="encounter-form-actions"><button className="button button-primary" disabled={busy}>{busy ? "Salvando..." : "Salvar minhas respostas"}</button></div>
+                  </form> : item.answers.map((answer) => <p className="encounter-answer" key={answer.questionId}><strong>{answer.question}</strong><span>{answer.answer || (isTherapist ? "Aguardando resposta do paciente." : "Sem resposta ainda.")}</span></p>)}
                   {canEdit && <span className="encounter-record-action">Clique para adicionar perguntas ou editar respostas</span>}
                 </article>
               ))}
@@ -639,6 +678,19 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
       {tab === "protocol" && (
         <section className="panel encounter-panel" id="encounter-panel-protocol" role="tabpanel" aria-labelledby="encounter-tab-protocol">
           <div className="panel-heading"><div><h2>Protocolo e etapas</h2><p className="muted">Vincule um protocolo à hipótese diagnóstica e acompanhe suas etapas.</p></div></div>
+          {canEdit && <div className="protocol-create-area">
+            <button type="button" className="button button-secondary" onClick={() => setShowProtocolCreateForm((open) => !open)}>{showProtocolCreateForm ? "Cancelar cadastro" : "+ Cadastrar protocolo"}</button>
+            {showProtocolCreateForm && <form className="panel form-panel protocol-create-form" onSubmit={createProtocol}>
+              <h3>Novo protocolo clínico</h3>
+              <div className="form-grid">
+                <label className="span-two">Nome do protocolo<input required minLength={2} maxLength={150} value={newProtocolForm.name} onChange={(event) => setNewProtocolForm({ ...newProtocolForm, name: event.target.value })} /></label>
+                <label className="span-two">Sintomas<input required minLength={2} maxLength={4000} value={newProtocolForm.symptoms} onChange={(event) => setNewProtocolForm({ ...newProtocolForm, symptoms: event.target.value })} /></label>
+                <label className="span-two">Objetivos<textarea required minLength={2} maxLength={4000} rows={2} value={newProtocolForm.objective} onChange={(event) => setNewProtocolForm({ ...newProtocolForm, objective: event.target.value })} /></label>
+                <label className="span-two">Etapa inicial<textarea required minLength={2} maxLength={1000} rows={2} value={newProtocolForm.firstStep} onChange={(event) => setNewProtocolForm({ ...newProtocolForm, firstStep: event.target.value })} /><span className="field-hint">A etapa inicial vincula o protocolo à terapia deste atendimento.</span></label>
+              </div>
+              <div className="encounter-form-actions"><button className="button button-primary" disabled={busy}>{busy ? "Salvando..." : "Salvar protocolo"}</button></div>
+            </form>}
+          </div>}
           {canEdit && (
             <form className="encounter-attach-form" onSubmit={attachProtocol}>
               <label>Diagnóstico<select required value={protocolForm.diagnosisId} onChange={(event) => setProtocolForm({ ...protocolForm, diagnosisId: event.target.value })}>
@@ -695,7 +747,8 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
               {detail.protocolOptions.map((protocol) => (
                 <details key={protocol.id}>
                   <summary>{protocol.name} <span>{protocol.steps.length} etapas</span></summary>
-                  {protocol.objective && <p>{protocol.objective}</p>}
+                  {protocol.description && <p><strong>Sintomas:</strong> {protocol.description}</p>}
+                  {protocol.objective && <p><strong>Objetivos:</strong> {protocol.objective}</p>}
                   {protocol.steps.length > 0 ? <ol>{protocol.steps.map((step) => <li key={step.id}>{step.description}{step.notes ? ` — ${step.notes}` : ""}</li>)}</ol> : <p>Este protocolo ainda não possui etapas cadastradas.</p>}
                 </details>
               ))}

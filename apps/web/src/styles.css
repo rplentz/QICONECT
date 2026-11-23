@@ -296,6 +296,35 @@ h3 { margin-bottom: 8px; font-size: 1.03rem; }
 .form-panel { display: grid; gap: 17px; }
 .form-panel > h2 { margin-bottom: -10px; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; }
+.form-grid-full { grid-column: 1 / -1; }
+.specialty-picker { margin: 0; padding: 14px; border: 1px solid var(--border); border-radius: 10px; }
+.specialty-picker legend { padding: 0 5px; color: #55655b; font-size: 0.75rem; font-weight: 700; }
+.registration-table-panel { margin-top: 18px; }
+.catalog-list { display: grid; gap: 8px; margin-top: 14px; }
+.catalog-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px; border: 1px solid #edf1ed; border-radius: 9px; background: #fdfefd; font-size: 0.78rem; }
+.catalog-row-button { width: 100%; color: inherit; text-align: left; cursor: pointer; }
+.catalog-row-button:hover { border-color: #9bb8a0; background: #f5f9f5; }
+.availability-list-panel { margin-top: 18px; }
+.availability-list-scroll { max-height: 340px; overflow-y: auto; padding-right: 5px; }
+.availability-list-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.availability-card { display: flex; min-width: 0; flex-direction: column; justify-content: space-between; gap: 12px; padding: 13px; border: 1px solid #e7ede7; border-radius: 10px; background: #fcfdfc; }
+.availability-card > div:first-child { display: grid; gap: 5px; }
+.availability-card strong { color: #254c39; font-size: 0.88rem; }
+.availability-card small { color: #748179; }
+.availability-card-actions, .availability-form-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.patient-encounters-panel { margin-top: 18px; }
+.protocol-create-area { display: grid; justify-items: start; gap: 12px; margin: 0 0 18px; }
+.protocol-create-form { width: 100%; padding: 16px; border: 1px solid #e9eee9; background: #fbfcfb; }
+.protocol-create-form h3 { margin: 0; }
+.patient-encounter-list { display: grid; }
+.patient-encounter-row { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(110px, 150px) auto; align-items: center; gap: 14px; padding: 13px 0; border-top: 1px solid #edf1ed; }
+.patient-encounter-main { display: grid; gap: 4px; color: #657369; font-size: 0.76rem; }
+.patient-encounter-main strong { color: #35473b; }
+.patient-encounter-main small { color: #7d8981; }
+@media (max-width: 850px) { .availability-list-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .availability-list-grid { grid-template-columns: 1fr; } }
+@media (max-width: 700px) { .patient-encounter-row { grid-template-columns: auto minmax(0, 1fr); } .patient-encounter-row .status-pill, .patient-encounter-row .button { grid-column: 2; justify-self: start; } }
+.catalog-row strong { color: #35473b; }
 .checkbox-field { min-width: 0; margin: 0; padding: 0; border: 0; }
 .checkbox-field legend { margin-bottom: 8px; color: #55655b; font-size: 0.73rem; font-weight: 600; }
 .checkbox-grid { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -323,6 +352,8 @@ td strong { color: #35473b; }
 
 .record-list { display: grid; gap: 12px; }
 .record-card { padding: 17px; border: 1px solid #edf1ed; border-radius: 12px; background: #fdfefd; }
+.record-patient-name { display: flex; align-items: baseline; gap: 7px; width: fit-content; margin: 12px 0 0; padding: 6px 10px; border-left: 3px solid var(--green-700); border-radius: 0 7px 7px 0; background: #edf5ee; color: #496052; font-size: 0.76rem; }
+.record-patient-name strong { color: #193d2c; font-size: 0.91rem; font-weight: 800; }
 .record-topline, .record-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .record-topline .muted, .record-footer .muted { font-size: 0.69rem; }
 .record-card h3 { margin-top: 15px; }

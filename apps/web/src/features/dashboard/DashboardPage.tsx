@@ -11,6 +11,7 @@ interface DashboardData {
 
 interface LastEncounter {
   id: string;
+  appointmentId: string | null;
   attendedAt: string;
   therapyId: string;
   therapyName: string;
@@ -58,7 +59,8 @@ interface TherapyProtocol {
 
 interface DashboardPageProps {
   session: Session;
-  onOpenPatient: (patientId: string) => void;
+  onOpenPatientEncounters: (patientId: string) => void;
+  onOpenEncounter: (appointmentId: string) => void;
 }
 
 function clinicDate(timezone: string): string {
@@ -98,7 +100,7 @@ function errorMessage(reason: unknown): string {
     : "Não foi possível carregar as informações da agenda.";
 }
 
-export function DashboardPage({ session, onOpenPatient }: DashboardPageProps) {
+export function DashboardPage({ session, onOpenPatientEncounters, onOpenEncounter }: DashboardPageProps) {
   const [data, setData] = useState<DashboardData>();
   const [selectedDate, setSelectedDate] = useState(() => clinicDate(session.activeClinic.timezone));
   const [loadingAppointments, setLoadingAppointments] = useState(true);
@@ -247,8 +249,8 @@ export function DashboardPage({ session, onOpenPatient }: DashboardPageProps) {
                 <button
                   type="button"
                   className="dashboard-last-encounter-link"
-                  aria-expanded={selectedProtocol?.kind === "encounter" && selectedProtocol.id === lastEncounter.id}
-                  onClick={() => toggleEncounter(lastEncounter)}
+                  onClick={() => lastEncounter.appointmentId && onOpenEncounter(lastEncounter.appointmentId)}
+                  disabled={!lastEncounter.appointmentId}
                 >
                   {formatEncounterDate(lastEncounter.attendedAt, session.activeClinic.timezone)}
                 </button>
@@ -266,7 +268,7 @@ export function DashboardPage({ session, onOpenPatient }: DashboardPageProps) {
                     type="button"
                     className="dashboard-recent-patient-link"
                     aria-expanded={selectedProtocol?.kind === "encounter" && selectedProtocol.id === patient.encounterId}
-                    onClick={() => onOpenPatient(patient.id)}
+                    onClick={() => onOpenPatientEncounters(patient.id)}
                   >
                     {patient.fullName}
                   </button>

@@ -115,6 +115,7 @@ export interface EncounterDetails {
     status: Appointment["status"];
     notes: string | null;
     startedAt: string;
+    examRequested: boolean;
   } | null;
   questions: Array<{ id: string; description: string }>;
   anamneses: Array<{

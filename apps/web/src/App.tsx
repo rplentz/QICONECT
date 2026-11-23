@@ -8,10 +8,12 @@ import { RegistrationPage, type RegistrationId } from "./features/registrations/
 import { SettingsPage } from "./features/settings/SettingsPage.js";
 import { EncountersPage } from "./features/encounters/EncountersPage.js";
 import { EncounterDetailPage } from "./features/encounters/EncounterDetailPage.js";
+import { TherapistProfilePage } from "./features/therapists/TherapistProfilePage.js";
+import { CatalogPage } from "./features/catalog/CatalogPage.js";
 import { apiRequest, type Session } from "./lib/api.js";
 import logoImage from "../../../Documentacao/Logo3.png";
 
-type Page = "dashboard" | "appointments" | "encounters" | "patients" | "records" | "settings" | `registration:${RegistrationId}` | `encounter:${string}`;
+type Page = "dashboard" | "appointments" | "encounters" | "patients" | "records" | "settings" | "therapist-profile" | "clients" | "specialties" | "therapies" | `registration:${RegistrationId}` | `encounter:${string}`;
 
 const registrations: Array<{
   id: RegistrationId;
@@ -36,7 +38,7 @@ const navigation: Array<{ id: Page; label: string; icon: string; roles?: Session
   { id: "dashboard", label: "Visão geral", icon: "⌂" },
   { id: "appointments", label: "Agenda", icon: "◷", roles: ["THERAPIST", "PATIENT"] },
   { id: "encounters", label: "Atendimentos", icon: "◉", roles: ["THERAPIST", "PATIENT"] },
-  { id: "patients", label: "Cadastro", icon: "♡", roles: ["THERAPIST", "PATIENT"] },
+  { id: "patients", label: "Cadastro", icon: "♡", roles: ["PATIENT"] },
   { id: "records", label: "Prontuário", icon: "▤", roles: ["THERAPIST", "PATIENT"] },
   { id: "settings", label: "Configurações", icon: "⚙", roles: ["CLINIC_ADMIN", "THERAPIST"] },
 ];
@@ -110,8 +112,15 @@ export function App() {
   }
 
   const activeRegistration = registrations.find((item) => page === `registration:${item.id}`);
+  const therapistRegistrations = [
+    { id: "therapist-profile" as const, label: "Terapeuta", icon: "✚" },
+    { id: "clients" as const, label: "Clientes", icon: "♡" },
+    { id: "specialties" as const, label: "Especialidades", icon: "✧" },
+    { id: "therapies" as const, label: "Terapias", icon: "✦" },
+  ];
+  const activeTherapistCadastro = therapistRegistrations.some((item) => item.id === page);
   const activeEncounterId = page.startsWith("encounter:") ? page.slice("encounter:".length) : null;
-  const pageLabel = activeRegistration?.label ?? (activeEncounterId ? "Atendimento" : navigation.find((item) => item.id === page)?.label ?? "Visão geral");
+  const pageLabel = activeRegistration?.label ?? therapistRegistrations.find((item) => item.id === page)?.label ?? (activeEncounterId ? "Atendimento" : navigation.find((item) => item.id === page)?.label ?? "Visão geral");
 
   return (
     <div className="app-shell">
@@ -129,12 +138,25 @@ export function App() {
         <span className="nav-section-label">MENU PRINCIPAL</span>
         <nav className="main-nav" aria-label="Navegação principal">
           {navigation.filter((item) => !item.roles || item.roles.includes(session.activeClinic.role)).map((item) => (
-              <button className={`nav-item ${page === item.id ? "nav-item-active" : ""}`} key={item.id} aria-label={item.label} aria-current={page === item.id ? "page" : undefined} onClick={() => { setEncounterPatientId(undefined); setPage(item.id); }}>
+              <button className={`nav-item ${page === item.id ? "nav-item-active" : ""}`} key={item.id} aria-label={item.label} aria-current={page === item.id ? "page" : undefined} onClick={() => { setEncounterPatientId(undefined); setSelectedPatientId(undefined); setPage(item.id); }}>
               <span className="nav-icon" aria-hidden="true">{item.icon}</span>
               <span>{item.label}</span>
               {page === item.id && <span className="nav-indicator" />}
             </button>
           ))}
+          {session.activeClinic.role === "THERAPIST" && (
+            <div className="nav-group">
+              <button className={`nav-item nav-group-toggle ${activeTherapistCadastro ? "nav-item-active" : ""}`} aria-label="Cadastros" aria-expanded={registrationsExpanded} onClick={() => setRegistrationsExpanded((expanded) => !expanded)}>
+                <span className="nav-icon" aria-hidden="true">▦</span><span>Cadastros</span><span className={`nav-chevron ${registrationsExpanded ? "nav-chevron-open" : ""}`} aria-hidden="true">⌄</span>
+                {activeTherapistCadastro && <span className="nav-indicator" />}
+              </button>
+              {registrationsExpanded && <div className="nav-submenu" aria-label="Cadastros do terapeuta">{therapistRegistrations.map((item) => (
+                <button className={`nav-item nav-subitem ${page === item.id ? "nav-item-active" : ""}`} key={item.id} aria-current={page === item.id ? "page" : undefined} onClick={() => setPage(item.id)}>
+                  <span className="nav-icon" aria-hidden="true">{item.icon}</span><span>{item.label}</span>{page === item.id && <span className="nav-indicator" />}
+                </button>
+              ))}</div>}
+            </div>
+          )}
           {session.activeClinic.role === "CLINIC_ADMIN" && (
             <div className="nav-group">
               <button
@@ -184,6 +206,7 @@ export function App() {
           <div className="breadcrumb">
             <span>{session.activeClinic.name}</span><b>/</b>
             {activeRegistration && <><span>Cadastros</span><b>/</b></>}
+            {activeTherapistCadastro && <><span>Cadastros</span><b>/</b></>}
             <strong>{pageLabel}</strong>
           </div>
           <div className="topbar-actions">
@@ -197,11 +220,15 @@ export function App() {
         </header>
         <main className="main-content">
           {error && <div className="alert alert-error global-alert">{error}<button onClick={() => setError("")}>Fechar</button></div>}
-          {page === "dashboard" && <DashboardPage session={session} onOpenPatient={(patientId) => { setSelectedPatientId(patientId); setPage("patients"); }} />}
+          {page === "dashboard" && <DashboardPage session={session} onOpenPatientEncounters={(patientId) => { setSelectedPatientId(patientId); setPage("patients"); }} onOpenEncounter={(appointmentId) => setPage(`encounter:${appointmentId}`)} />}
           {page === "appointments" && <AppointmentsPage session={session} />}
           {page === "encounters" && <EncountersPage session={session} patientId={encounterPatientId} onOpen={(appointmentId) => setPage(`encounter:${appointmentId}`)} />}
-          {activeEncounterId && <EncounterDetailPage key={activeEncounterId} appointmentId={activeEncounterId} session={session} onBack={() => setPage("encounters")} />}
-          {page === "patients" && <PatientsPage session={session} selectedPatientId={selectedPatientId} onSelectPatient={setSelectedPatientId} onClearSelection={() => setSelectedPatientId(undefined)} onOpenEncounters={(patientId) => { setEncounterPatientId(patientId); setPage("encounters"); }} />}
+          {activeEncounterId && <EncounterDetailPage key={activeEncounterId} appointmentId={activeEncounterId} session={session} onBack={() => setPage(selectedPatientId ? "patients" : "encounters")} />}
+          {page === "patients" && <PatientsPage session={session} selectedPatientId={selectedPatientId} onSelectPatient={setSelectedPatientId} onClearSelection={() => setSelectedPatientId(undefined)} onOpenEncounters={(patientId) => { setEncounterPatientId(patientId); setPage("encounters"); }} onOpenEncounter={(appointmentId) => setPage(`encounter:${appointmentId}`)} />}
+          {page === "clients" && <PatientsPage session={session} title="Clientes" selectedPatientId={selectedPatientId} onSelectPatient={setSelectedPatientId} onClearSelection={() => setSelectedPatientId(undefined)} onOpenEncounters={(patientId) => { setEncounterPatientId(patientId); setPage("encounters"); }} onOpenEncounter={(appointmentId) => setPage(`encounter:${appointmentId}`)} />}
+          {page === "therapist-profile" && <TherapistProfilePage session={session} />}
+          {page === "specialties" && <CatalogPage kind="specialty" />}
+          {page === "therapies" && <CatalogPage kind="therapy" />}
           {page === "records" && <RecordsPage session={session} />}
           {page === "settings" && session.activeClinic.role !== "PATIENT" && <SettingsPage session={session} />}
           {activeRegistration && <RegistrationPage resource={activeRegistration.id} session={session} />}
