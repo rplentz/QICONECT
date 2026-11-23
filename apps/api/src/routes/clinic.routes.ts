@@ -23,9 +23,29 @@ clinicRouter.get("/dashboard", requireAuth, (request, response) => {
   const lastEncounter = db.prepare(`SELECT a.id,a.dt_atend AS attendedAt,a.terapia_id AS therapyId,t.nome AS therapyName,
     (SELECT ag.id FROM AGENDA ag WHERE ag.paciente_id=a.paciente_id AND ag.terapeuta_id=a.terapeuta_id AND ag.terapia_id=a.terapia_id AND ag.dt_inicio=a.dt_atend ORDER BY ag.id DESC LIMIT 1) AS appointmentId
     FROM ATENDIMENTO a JOIN PACIENTE p ON p.id=a.paciente_id JOIN TERAPIA t ON t.id=a.terapia_id JOIN USUARIO_CLINICA uc ON uc.usuario_id=p.usuario_id AND uc.clinica_id=p.clinica_id AND uc.perfil_id=4 AND uc.status=1 WHERE p.clinica_id=? AND (? IS NULL OR p.id=?) AND (? IS NULL OR a.terapeuta_id=?) ORDER BY a.dt_atend DESC LIMIT 1`).get(Number(auth.clinicId),patient?.id??null,patient?.id??null,therapist?.id??null,therapist?.id??null) as {id:number;attendedAt:string;therapyId:number;therapyName:string;appointmentId:number|null}|undefined;
+  let therapistStats: Record<string, unknown> | null = null;
+  if (auth.role === "THERAPIST" && therapist) {
+    const localDate = new Intl.DateTimeFormat("en-CA", { timeZone: auth.clinicTimezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+    const [year, month] = localDate.split("-").map(Number);
+    const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
+    const nextMonthDate = new Date(Date.UTC(year, month, 1));
+    const nextMonth = `${nextMonthDate.getUTCFullYear()}-${String(nextMonthDate.getUTCMonth() + 1).padStart(2, "0")}-01`;
+    const yearStart = `${year}-01-01`;
+    const nextYear = `${year + 1}-01-01`;
+    const currentMonth = db.prepare(`SELECT
+      SUM(CASE WHEN a.status=3 THEN 1 ELSE 0 END) AS scheduled,
+      SUM(CASE WHEN a.status=7 OR EXISTS(SELECT 1 FROM ATENDIMENTO x WHERE x.paciente_id=a.paciente_id AND x.terapeuta_id=a.terapeuta_id AND x.terapia_id=a.terapia_id AND x.dt_atend=a.dt_inicio AND x.status=7) THEN 1 ELSE 0 END) AS inProgress,
+      SUM(CASE WHEN a.status=4 THEN 1 ELSE 0 END) AS cancelled,
+      SUM(CASE WHEN a.status=8 OR EXISTS(SELECT 1 FROM ATENDIMENTO x WHERE x.paciente_id=a.paciente_id AND x.terapeuta_id=a.terapeuta_id AND x.terapia_id=a.terapia_id AND x.dt_atend=a.dt_inicio AND x.status=8) THEN 1 ELSE 0 END) AS finished
+      FROM AGENDA a JOIN PACIENTE p ON p.id=a.paciente_id WHERE p.clinica_id=? AND a.terapeuta_id=? AND date(a.dt_inicio)>=date(?) AND date(a.dt_inicio)<date(?)`)
+      .get(Number(auth.clinicId),therapist.id,monthStart,nextMonth) as {scheduled:number|null;inProgress:number|null;cancelled:number|null;finished:number|null};
+    const attendanceCount = (db.prepare(`SELECT COUNT(*) AS count FROM ATENDIMENTO a JOIN PACIENTE p ON p.id=a.paciente_id WHERE p.clinica_id=? AND a.terapeuta_id=? AND date(a.dt_atend)>=date(?) AND date(a.dt_atend)<date(?)`).get(Number(auth.clinicId),therapist.id,yearStart,nextYear) as {count:number}).count;
+    const topTherapies = db.prepare(`SELECT t.id AS therapyId,t.nome AS therapyName,COUNT(*) AS appointments FROM AGENDA a JOIN PACIENTE p ON p.id=a.paciente_id JOIN TERAPIA t ON t.id=a.terapia_id WHERE p.clinica_id=? AND a.terapeuta_id=? AND date(a.dt_inicio)>=date(?) AND date(a.dt_inicio)<date(?) AND a.status NOT IN (4,5) GROUP BY t.id,t.nome ORDER BY appointments DESC,t.nome LIMIT 5`).all(Number(auth.clinicId),therapist.id,yearStart,nextYear) as Array<{therapyId:number;therapyName:string;appointments:number}>;
+    therapistStats = { period: new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric", timeZone: auth.clinicTimezone }).format(new Date()), scheduled:currentMonth.scheduled??0,inProgress:currentMonth.inProgress??0,cancelled:currentMonth.cancelled??0,finished:currentMonth.finished??0,monthlyAverage:Number((attendanceCount/month).toFixed(1)),averageMonths:month,topTherapies:topTherapies.map((item)=>({...item,therapyId:String(item.therapyId)})) };
+  }
   const recentPatients = auth.role==="THERAPIST" && therapist ? db.prepare(`SELECT p.id AS id,u.nome AS fullName,a.id AS encounterId,a.dt_atend AS attendedAt,a.terapia_id AS therapyId,t.nome AS therapyName FROM ATENDIMENTO a JOIN PACIENTE p ON p.id=a.paciente_id JOIN USUARIO u ON u.id=p.usuario_id JOIN TERAPIA t ON t.id=a.terapia_id JOIN USUARIO_CLINICA uc ON uc.usuario_id=u.id AND uc.clinica_id=p.clinica_id AND uc.perfil_id=4 AND uc.status=1 WHERE p.clinica_id=? AND a.terapeuta_id=? AND a.id=(SELECT a2.id FROM ATENDIMENTO a2 WHERE a2.paciente_id=p.id ORDER BY a2.dt_atend DESC LIMIT 1) ORDER BY a.dt_atend DESC LIMIT 6`).all(Number(auth.clinicId),therapist.id) : [];
   const todayCount = appointments.filter((row) => row.status === 3).length;
-  response.json({ counts: { patients: auth.role === "PATIENT" ? 1 : patientCount, appointmentsToday: todayCount },
+  response.json({ counts: { patients: auth.role === "PATIENT" ? 1 : patientCount, appointmentsToday: todayCount }, therapistStats,
     appointmentsForDate: appointments.map((row) => ({...row,status:statusLabel(row.status)})),
     selectedDate: String(request.query.date ?? new Date().toISOString()).slice(0,10), lastEncounter: lastEncounter ? {...lastEncounter,id:String(lastEncounter.id),appointmentId:lastEncounter.appointmentId===null?null:String(lastEncounter.appointmentId),therapyId:String(lastEncounter.therapyId)} : null, recentPatients: recentPatients.map((row:any)=>({...row,id:String(row.id),encounterId:String(row.encounterId),therapyId:String(row.therapyId)})) });
 });

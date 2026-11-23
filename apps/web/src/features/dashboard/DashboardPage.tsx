@@ -3,6 +3,16 @@ import { ApiError, apiRequest, type Appointment, type Session } from "../../lib/
 
 interface DashboardData {
   counts: { patients: number; appointmentsToday: number };
+  therapistStats: {
+    period: string;
+    scheduled: number;
+    inProgress: number;
+    cancelled: number;
+    finished: number;
+    monthlyAverage: number;
+    averageMonths: number;
+    topTherapies: Array<{ therapyId: string; therapyName: string; appointments: number }>;
+  } | null;
   appointmentsForDate: Appointment[];
   selectedDate: string;
   lastEncounter: LastEncounter | null;
@@ -285,6 +295,21 @@ export function DashboardPage({ session, onOpenPatientEncounters, onOpenEncounte
           )}
         </article>
       </div>
+      {isTherapist && data?.therapistStats && <section className="dashboard-therapist-insights">
+        <div className="panel-heading dashboard-insights-heading"><div><h2>Indicadores de atendimentos</h2><p className="muted">Resumo do mês e demanda de terapias no ano.</p></div><span className="soft-badge">{data.therapistStats.period}</span></div>
+        <div className="dashboard-metric-grid">
+          <article className="dashboard-metric-card"><span>Atendimentos agendados</span><strong>{data.therapistStats.scheduled}</strong><small>No mês atual</small></article>
+          <article className="dashboard-metric-card"><span>Em atendimento</span><strong>{data.therapistStats.inProgress}</strong><small>No mês atual</small></article>
+          <article className="dashboard-metric-card"><span>Cancelados</span><strong>{data.therapistStats.cancelled}</strong><small>No mês atual</small></article>
+          <article className="dashboard-metric-card"><span>Finalizados</span><strong>{data.therapistStats.finished}</strong><small>No mês atual</small></article>
+        </div>
+        <div className="dashboard-insights-detail-grid">
+          <article className="dashboard-insight-panel"><span className="eyebrow">MÉDIA MENSAL</span><strong className="dashboard-average-value">{data.therapistStats.monthlyAverage}</strong><p className="muted">Atendimentos iniciados por mês, em média, neste ano ({data.therapistStats.averageMonths} {data.therapistStats.averageMonths === 1 ? "mês" : "meses"}).</p></article>
+          <article className="dashboard-insight-panel"><div className="panel-heading"><div><h3>Terapias mais solicitadas</h3><p className="muted">Agendamentos não cancelados no ano</p></div></div>
+            {data.therapistStats.topTherapies.length === 0 ? <p className="empty-state">Nenhum agendamento neste ano.</p> : <ol className="dashboard-therapy-ranking">{data.therapistStats.topTherapies.map((therapy,index) => <li key={therapy.therapyId}><span className="dashboard-ranking-position">{index + 1}</span><span className="dashboard-ranking-name">{therapy.therapyName}<i><b style={{ width: `${Math.max(8, therapy.appointments / data.therapistStats!.topTherapies[0].appointments * 100)}%` }} /></i></span><strong>{therapy.appointments}</strong></li>)}</ol>}
+          </article>
+        </div>
+      </section>}
       {(isPatient || isTherapist) && selectedProtocol?.kind === "encounter" && (
         <section className="panel dashboard-last-encounter-panel">
           <div className="panel-heading">

@@ -84,10 +84,42 @@ function groupProtocolsByDiagnosis(stages: ProtocolStage[]): DiagnosisProtocolGr
   });
 }
 
+function groupProtocolCatalogByDiagnosis(protocols: EncounterDetails["protocolCatalog"]) {
+  const groups = new Map<string, { diagnosisId: string; diagnosisDescription: string; diagnosedAt: string | null; protocols: typeof protocols }>();
+  for (const protocol of protocols) {
+    let group = groups.get(protocol.diagnosisId);
+    if (!group) {
+      group = { diagnosisId: protocol.diagnosisId, diagnosisDescription: protocol.diagnosisDescription, diagnosedAt: protocol.diagnosedAt, protocols: [] };
+      groups.set(protocol.diagnosisId, group);
+    }
+    group.protocols.push(protocol);
+  }
+  return [...groups.values()];
+}
+
 function dateOrderValue(value: string | null | undefined): number {
   if (!value) return 0;
   const time = new Date(value).getTime();
   return Number.isFinite(time) ? time : 0;
+}
+
+function dateInputValue(value: string | null | undefined): string | null {
+  if (!value) return null;
+  if (/^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
+}
+
+function evolutionStageEligibility(stage: ProtocolStage, stages: ProtocolStage[], evolutions: EncounterDetails["evolutions"]) {
+  const previousStages = stages.filter((item) => item.diagnosisId === stage.diagnosisId && item.protocolId === stage.protocolId && item.sequence < stage.sequence)
+    .sort((first, second) => first.sequence - second.sequence);
+  const missingPrevious = previousStages.find((previous) => !evolutions.some((evolution) => evolution.diagnosisProtocolId === previous.diagnosisProtocolId));
+  const dates = [stage.startsAt, ...evolutions.filter((evolution) => {
+    const previousStage = previousStages.find((item) => item.diagnosisProtocolId === evolution.diagnosisProtocolId);
+    return Boolean(previousStage);
+  }).map((evolution) => evolution.evolvedAt)]
+    .map(dateInputValue).filter((date): date is string => Boolean(date)).sort();
+  return { allowed: !missingPrevious, missingSequence: missingPrevious?.sequence, minDate: dates.at(-1) ?? null };
 }
 
 function groupEvolutionsByDiagnosisAndStage(
@@ -189,7 +221,10 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
   const [patientAnswers, setPatientAnswers] = useState<Record<string, Record<string, string>>>({});
   const [protocolForm, setProtocolForm] = useState({ diagnosisId: "", protocolId: "" });
   const [showProtocolCreateForm, setShowProtocolCreateForm] = useState(false);
-  const [newProtocolForm, setNewProtocolForm] = useState({ name: "", symptoms: "", objective: "", firstStep: "" });
+  const [newProtocolForm, setNewProtocolForm] = useState({ name: "", symptoms: "", objective: "" });
+  const [stageProtocol, setStageProtocol] = useState<{ id: string; name: string } | null>(null);
+  const [unassignedProtocols, setUnassignedProtocols] = useState<Array<{ id: string; name: string; symptoms: string | null; objective: string | null }>>([]);
+  const [newStageForm, setNewStageForm] = useState({ description: "", startsAt: "", endsAt: "", notes: "" });
   const [evolutionForm, setEvolutionForm] = useState({
     diagnosisProtocolId: "",
     description: "",
@@ -199,6 +234,9 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
 
   async function load() {
     const result = await apiRequest<EncounterDetails>(`/encounters/${appointmentId}`);
+    const evolutionStages = [...result.protocols].sort((first, second) => dateOrderValue(second.diagnosedAt) - dateOrderValue(first.diagnosedAt) || first.protocolName.localeCompare(second.protocolName, "pt-BR") || dateOrderValue(first.startsAt) - dateOrderValue(second.startsAt) || first.sequence - second.sequence);
+    const firstAvailableStage = evolutionStages.find((stage) => evolutionStageEligibility(stage, result.protocols, result.evolutions).allowed) ?? evolutionStages[0];
+    const firstStageMinimumDate = firstAvailableStage ? evolutionStageEligibility(firstAvailableStage, result.protocols, result.evolutions).minDate : null;
     setDetail(result);
     if (session.activeClinic.role === "PATIENT") setPatientAnswers(Object.fromEntries(result.anamneses.map((item) => [item.id, Object.fromEntries(item.answers.map((answer) => [answer.questionId, answer.answer ?? ""]))])));
     setProtocolForm((current) => ({
@@ -208,12 +246,19 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
     }));
     setEvolutionForm((current) => ({
       ...current,
-      diagnosisProtocolId: current.diagnosisProtocolId || result.protocols[0]?.diagnosisProtocolId || "",
+      diagnosisProtocolId: current.diagnosisProtocolId || firstAvailableStage?.diagnosisProtocolId || "",
+      evolvedAt: current.evolvedAt < today() || (firstStageMinimumDate && current.evolvedAt < firstStageMinimumDate) ? (firstStageMinimumDate && firstStageMinimumDate > today() ? firstStageMinimumDate : today()) : current.evolvedAt,
     }));
   }
 
+  async function loadUnassignedProtocols() {
+    if (session.activeClinic.role !== "THERAPIST") return;
+    const result = await apiRequest<{ protocols: Array<{ id: string; name: string; symptoms: string | null; objective: string | null }> }>(`/encounters/${appointmentId}/protocol-catalog/unassigned`);
+    setUnassignedProtocols(result.protocols);
+  }
+
   useEffect(() => {
-    load().catch((reason: Error) => setError(reason.message));
+    load().then(() => loadUnassignedProtocols()).catch((reason: Error) => setError(reason.message));
   }, [appointmentId]);
 
   useEffect(() => {
@@ -431,8 +476,30 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
 
   function createProtocol(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void mutate(`/encounters/${appointmentId}/protocol-catalog`, "POST", newProtocolForm, "Protocolo cadastrado com etapa inicial para esta terapia.")
-      .then((saved) => { if (saved) { setNewProtocolForm({ name: "", symptoms: "", objective: "", firstStep: "" }); setShowProtocolCreateForm(false); } });
+    setBusy(true); setError(""); setNotice("");
+    void apiRequest<{ protocolId: string; name: string }>(`/encounters/${appointmentId}/protocol-catalog`, { method: "POST", body: JSON.stringify({ ...newProtocolForm, diagnosisId: protocolForm.diagnosisId }) })
+      .then(async (created) => { setStageProtocol({ id: created.protocolId, name: created.name }); setProtocolForm((current) => ({ ...current, protocolId: created.protocolId })); setNewProtocolForm({ name: "", symptoms: "", objective: "" }); setShowProtocolCreateForm(false); setNotice("Protocolo cadastrado e vinculado ao diagnóstico. Ele já está visível ao paciente; você pode adicionar etapas agora ou depois."); await load(); await loadUnassignedProtocols(); })
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "Não foi possível cadastrar o protocolo."))
+      .finally(() => setBusy(false));
+  }
+
+  async function linkUnassignedProtocol(protocol: { id: string; name: string }) {
+    if (!protocolForm.diagnosisId) { setError("Selecione o diagnóstico para vincular o protocolo."); return; }
+    setBusy(true); setError(""); setNotice("");
+    try {
+      await apiRequest(`/encounters/${appointmentId}/protocol-catalog/${protocol.id}/diagnosis`, { method: "PATCH", body: JSON.stringify({ diagnosisId: protocolForm.diagnosisId }) });
+      setProtocolForm((current) => ({ ...current, protocolId: protocol.id })); setStageProtocol(protocol); setNotice("Protocolo vinculado ao diagnóstico e disponível para o paciente."); await load(); await loadUnassignedProtocols();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Não foi possível vincular o protocolo."); }
+    finally { setBusy(false); }
+  }
+
+  function saveProtocolStage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (!stageProtocol) return;
+    setBusy(true); setError(""); setNotice("");
+    void apiRequest<{ sequence: number }>(`/encounters/${appointmentId}/protocol-catalog/${stageProtocol.id}/steps`, { method: "POST", body: JSON.stringify(newStageForm) })
+      .then(async ({ sequence }) => { setNewStageForm({ description: "", startsAt: "", endsAt: "", notes: "" }); setNotice(`Etapa ${sequence} cadastrada.`); await load(); })
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "Não foi possível cadastrar a etapa."))
+      .finally(() => setBusy(false));
   }
 
   function updateStage(diagnosisProtocolId: string, status: keyof typeof stageStatusLabels) {
@@ -446,6 +513,8 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
 
   function saveEvolution(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!selectedEvolutionEligibility?.allowed) { setError(`Registre primeiro a evolução da etapa ${selectedEvolutionEligibility?.missingSequence ?? "anterior"}.`); return; }
+    if (!evolutionDateIsValid) { setError(`A data da evolução deve ser igual ou posterior a ${selectedEvolutionEligibility?.minDate}.`); return; }
     void mutate(
       `/encounters/${appointmentId}/evolutions`,
       "POST",
@@ -482,7 +551,11 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
       question.description.toLocaleLowerCase("pt-BR").includes(questionSearch.trim().toLocaleLowerCase("pt-BR")),
     );
   const protocolGroups = groupProtocolsByDiagnosis(detail.protocols);
+  const protocolCatalogGroups = groupProtocolCatalogByDiagnosis(detail.protocolCatalog);
   const evolutionGroups = groupEvolutionsByDiagnosisAndStage(detail.protocols, detail.evolutions);
+  const selectedEvolutionStage = detail.protocols.find((item) => item.diagnosisProtocolId === evolutionForm.diagnosisProtocolId);
+  const selectedEvolutionEligibility = selectedEvolutionStage ? evolutionStageEligibility(selectedEvolutionStage, detail.protocols, detail.evolutions) : null;
+  const evolutionDateIsValid = !selectedEvolutionEligibility?.minDate || evolutionForm.evolvedAt >= selectedEvolutionEligibility.minDate;
   return (
     <div className="page-content">
       <button className="encounter-back-link" onClick={onBack}>← Voltar para atendimentos</button>
@@ -683,14 +756,25 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
             {showProtocolCreateForm && <form className="panel form-panel protocol-create-form" onSubmit={createProtocol}>
               <h3>Novo protocolo clínico</h3>
               <div className="form-grid">
+                <label className="span-two">Diagnóstico associado<select required value={protocolForm.diagnosisId} onChange={(event) => setProtocolForm({ ...protocolForm, diagnosisId: event.target.value })}><option value="">Selecione o diagnóstico</option>{detail.diagnoses.map((item) => <option key={item.id} value={item.id}>{item.description}</option>)}</select></label>
                 <label className="span-two">Nome do protocolo<input required minLength={2} maxLength={150} value={newProtocolForm.name} onChange={(event) => setNewProtocolForm({ ...newProtocolForm, name: event.target.value })} /></label>
                 <label className="span-two">Sintomas<input required minLength={2} maxLength={4000} value={newProtocolForm.symptoms} onChange={(event) => setNewProtocolForm({ ...newProtocolForm, symptoms: event.target.value })} /></label>
                 <label className="span-two">Objetivos<textarea required minLength={2} maxLength={4000} rows={2} value={newProtocolForm.objective} onChange={(event) => setNewProtocolForm({ ...newProtocolForm, objective: event.target.value })} /></label>
-                <label className="span-two">Etapa inicial<textarea required minLength={2} maxLength={1000} rows={2} value={newProtocolForm.firstStep} onChange={(event) => setNewProtocolForm({ ...newProtocolForm, firstStep: event.target.value })} /><span className="field-hint">A etapa inicial vincula o protocolo à terapia deste atendimento.</span></label>
               </div>
-              <div className="encounter-form-actions"><button className="button button-primary" disabled={busy}>{busy ? "Salvando..." : "Salvar protocolo"}</button></div>
+              <div className="encounter-form-actions"><button className="button button-primary" disabled={busy || !detail.diagnoses.length}>{busy ? "Salvando..." : "Salvar protocolo"}</button></div>
             </form>}
+            {unassignedProtocols.length > 0 && <section className="panel unassigned-protocol-panel"><h3>Protocolos ainda sem diagnóstico</h3><p className="muted">Vincule um protocolo já cadastrado ao diagnóstico selecionado para torná-lo visível neste atendimento.</p>{unassignedProtocols.map((protocol) => <article className="unassigned-protocol-row" key={protocol.id}><div><strong>{protocol.name}</strong>{protocol.symptoms && <small>Sintomas: {protocol.symptoms}</small>}{protocol.objective && <small>Objetivos: {protocol.objective}</small>}</div><button type="button" className="button button-secondary" disabled={busy || !protocolForm.diagnosisId} onClick={() => void linkUnassignedProtocol(protocol)}>Vincular ao diagnóstico</button></article>)}</section>}
           </div>}
+          {canEdit && stageProtocol && <section className="panel protocol-stage-create-panel">
+            <div className="panel-heading"><div><h3>Etapas de {stageProtocol.name}</h3><p className="muted">Adicione as etapas do protocolo. Cada nova etapa recebe a próxima sequência automaticamente.</p></div></div>
+            <form className="form-panel" onSubmit={saveProtocolStage}>
+              <label>Descrição da etapa<textarea required minLength={2} maxLength={1000} rows={2} value={newStageForm.description} onChange={(event) => setNewStageForm({ ...newStageForm, description: event.target.value })} /></label>
+              <div className="form-grid"><label>Data inicial<input type="date" value={newStageForm.startsAt} onChange={(event) => setNewStageForm({ ...newStageForm, startsAt: event.target.value })} /></label><label>Data final<input type="date" value={newStageForm.endsAt} onChange={(event) => setNewStageForm({ ...newStageForm, endsAt: event.target.value })} /></label></div>
+              <label>Observações<textarea maxLength={2000} rows={2} value={newStageForm.notes} onChange={(event) => setNewStageForm({ ...newStageForm, notes: event.target.value })} /></label>
+              <div className="encounter-form-actions"><button className="button button-primary" disabled={busy}>{busy ? "Salvando..." : "Adicionar etapa"}</button></div>
+            </form>
+            {detail.protocolOptions.find((item) => item.id === stageProtocol.id)?.steps.map((step) => <article className="protocol-stage-draft-row" key={step.id}><strong>Etapa {step.sequence}</strong><span>{step.description}</span>{step.startsAt && <small>Início: {formatClinicalDate(step.startsAt)}</small>}</article>)}
+          </section>}
           {canEdit && (
             <form className="encounter-attach-form" onSubmit={attachProtocol}>
               <label>Diagnóstico<select required value={protocolForm.diagnosisId} onChange={(event) => setProtocolForm({ ...protocolForm, diagnosisId: event.target.value })}>
@@ -702,9 +786,20 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
               <button className="button button-primary" disabled={busy || !detail.diagnoses.length || !detail.protocolOptions.some((item) => item.steps.length > 0)}>
                 {busy ? "Vinculando..." : "Vincular protocolo"}
               </button>
-              {detail.protocolOptions.length === 0 && <p className="field-hint">Não há protocolos ativos cadastrados para esta terapia.</p>}
+              {detail.protocolOptions.length === 0 && <p className="field-hint">Ainda não há protocolos com etapas cadastradas para esta terapia.</p>}
             </form>
           )}
+          {protocolCatalogGroups.length > 0 && <div className="encounter-diagnosis-protocol-list protocol-catalog-by-diagnosis">
+            <h3>Protocolos cadastrados para os diagnósticos</h3>
+            {protocolCatalogGroups.map((diagnosis) => <section className="encounter-diagnosis-protocol-group" key={diagnosis.diagnosisId}>
+              <header className="encounter-diagnosis-protocol-heading"><div className="record-topline"><span className="soft-badge">Diagnóstico</span><span className="muted">{formatClinicalDate(diagnosis.diagnosedAt)}</span></div><p className="encounter-record-description">{diagnosis.diagnosisDescription}</p></header>
+              {diagnosis.protocols.map((protocol) => <article className="encounter-linked-protocol protocol-catalog-card" key={protocol.id}>
+                <div className="panel-heading"><h3>{protocol.name}</h3>{canEdit && <button type="button" className="button button-secondary" onClick={() => { setStageProtocol({ id: protocol.id, name: protocol.name }); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Adicionar etapas</button>}</div>
+                {protocol.symptoms && <p><strong>Sintomas:</strong> {protocol.symptoms}</p>}{protocol.objective && <p><strong>Objetivos:</strong> {protocol.objective}</p>}
+                {protocol.steps.length ? <div className="protocol-catalog-step-list">{protocol.steps.map((step) => <div className="protocol-stage-draft-row" key={step.id}><strong>Etapa {step.sequence}</strong><span>{step.description}</span>{step.startsAt && <small>{formatClinicalDate(step.startsAt)}{step.endsAt ? ` – ${formatClinicalDate(step.endsAt)}` : ""}</small>}</div>)}</div> : <p className="muted">Protocolo cadastrado; ainda sem etapas.</p>}
+              </article>)}
+            </section>)}
+          </div>}
           {protocolGroups.length === 0 ? <p className="empty-state">Nenhuma etapa de protocolo vinculada a este atendimento.</p> : (
             <div className="encounter-diagnosis-protocol-list">
               {protocolGroups.map((diagnosis) => (
@@ -763,16 +858,25 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
           {canEdit && (
             <form className="form-panel" onSubmit={saveEvolution}>
               <div className="form-grid">
-                <label className="span-two">Etapa do protocolo<select required value={evolutionForm.diagnosisProtocolId} onChange={(event) => setEvolutionForm({ ...evolutionForm, diagnosisProtocolId: event.target.value })}>
-                  <option value="">Selecione</option>{detail.protocols.map((item) => <option key={item.diagnosisProtocolId} value={item.diagnosisProtocolId}>{item.protocolName} · Etapa {item.sequence}: {item.stepDescription}</option>)}
+                <label className="span-two">Etapa do protocolo<select required value={evolutionForm.diagnosisProtocolId} onChange={(event) => {
+                  const nextStage = detail.protocols.find((item) => item.diagnosisProtocolId === event.target.value);
+                  const eligibility = nextStage ? evolutionStageEligibility(nextStage, detail.protocols, detail.evolutions) : null;
+                  setEvolutionForm({ ...evolutionForm, diagnosisProtocolId: event.target.value, ...(eligibility?.minDate && eligibility.minDate > today() ? { evolvedAt: eligibility.minDate } : {}) });
+                }}>
+                  <option value="">Selecione</option>{[...detail.protocols].sort((first, second) => dateOrderValue(second.diagnosedAt) - dateOrderValue(first.diagnosedAt) || first.protocolName.localeCompare(second.protocolName, "pt-BR") || dateOrderValue(first.startsAt) - dateOrderValue(second.startsAt) || first.sequence - second.sequence).map((item) => {
+                    const eligibility = evolutionStageEligibility(item, detail.protocols, detail.evolutions);
+                    return <option key={item.diagnosisProtocolId} value={item.diagnosisProtocolId} disabled={!eligibility.allowed}>{item.protocolName} · Etapa {item.sequence}: {item.stepDescription}{eligibility.missingSequence ? ` (aguarda evolução da etapa ${eligibility.missingSequence})` : ""}</option>;
+                  })}
                 </select></label>
-                <label>Data<input type="date" required value={evolutionForm.evolvedAt} onChange={(event) => setEvolutionForm({ ...evolutionForm, evolvedAt: event.target.value })} /></label>
+                <label>Data<input type="date" required min={selectedEvolutionEligibility?.minDate ?? undefined} value={evolutionForm.evolvedAt} onChange={(event) => setEvolutionForm({ ...evolutionForm, evolvedAt: event.target.value })} /></label>
                 <label>Status<select value={evolutionForm.status} onChange={(event) => setEvolutionForm({ ...evolutionForm, status: event.target.value as keyof typeof evolutionStatusLabels })}>
                   {Object.entries(evolutionStatusLabels).map(([status, label]) => <option key={status} value={status}>{label}</option>)}
                 </select></label>
                 <label className="span-two">Descrição da evolução<textarea required minLength={2} maxLength={4000} rows={4} value={evolutionForm.description} onChange={(event) => setEvolutionForm({ ...evolutionForm, description: event.target.value })} /></label>
               </div>
-              <div className="encounter-form-actions"><button className="button button-primary" disabled={busy || detail.protocols.length === 0}>{busy ? "Salvando..." : "Salvar evolução"}</button></div>
+              <div className="encounter-form-actions"><button className="button button-primary" disabled={busy || detail.protocols.length === 0 || !selectedEvolutionEligibility?.allowed || !evolutionDateIsValid}>{busy ? "Salvando..." : "Salvar evolução"}</button></div>
+              {selectedEvolutionEligibility?.missingSequence && <p className="field-hint">Registre uma evolução para a etapa {selectedEvolutionEligibility.missingSequence} antes de avançar.</p>}
+              {selectedEvolutionEligibility?.minDate && !evolutionDateIsValid && <p className="field-hint">A evolução deve seguir a cronologia das etapas, a partir de {formatClinicalDate(selectedEvolutionEligibility.minDate)}.</p>}
               {detail.protocols.length === 0 && <p className="field-hint">Vincule um protocolo com etapas antes de registrar evoluções.</p>}
             </form>
           )}

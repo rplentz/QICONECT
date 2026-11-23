@@ -126,6 +126,16 @@ export interface EncounterDetails {
     answers: Array<{ questionId: string; question: string; answer: string }>;
   }>;
   diagnoses: Array<{ id: string; description: string; diagnosedAt: string | null }>;
+  protocolCatalog: Array<{
+    id: string;
+    name: string;
+    symptoms: string | null;
+    objective: string | null;
+    diagnosisId: string;
+    diagnosisDescription: string;
+    diagnosedAt: string | null;
+    steps: Array<{ id: string; sequence: number; startsAt: string | null; endsAt: string | null; description: string | null; notes: string | null }>;
+  }>;
   protocols: Array<{
     diagnosisProtocolId: string;
     diagnosisId: string;
