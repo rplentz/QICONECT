@@ -53,6 +53,14 @@ CREATE TABLE PROTOCOLO_ETAPA (
   terapia_id INTEGER NOT NULL REFERENCES TERAPIA(id), dt_inicio date, dt_fim date, descricao TEXT, obs TEXT,
   UNIQUE(protocolo_id, sequencia)
 );
+CREATE TABLE FEEDBACK (
+  id INTEGER PRIMARY KEY,
+  protocolo_etapa_id INTEGER NOT NULL REFERENCES PROTOCOLO_ETAPA(id),
+  dt_feedback date,
+  percepcao_melhora TEXT,
+  sugestao TEXT,
+  avaliacao_melhora INTEGER
+);
 CREATE TABLE DIAGNOSTICO_PROTOCOLO (
   id INTEGER PRIMARY KEY, diagnostico_id INTEGER NOT NULL REFERENCES DIAGNOSTICO(id),
   protocolo_etapa_id INTEGER NOT NULL REFERENCES PROTOCOLO_ETAPA(id), dt_diagnostico date,

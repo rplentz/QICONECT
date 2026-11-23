@@ -55,11 +55,17 @@ function details(row:Record<string,any>,clinicId:number){
   FROM EVOLUCAO e JOIN DIAGNOSTICO_PROTOCOLO dp ON dp.id=e.diagnostico_protocolo_id JOIN DIAGNOSTICO d ON d.id=dp.diagnostico_id
   JOIN PROTOCOLO_ETAPA st ON st.id=dp.protocolo_etapa_id JOIN PROTOCOLO p ON p.id=st.protocolo_id
   WHERE d.paciente_id=? AND d.terapeuta_id=? ORDER BY e.dt_evolucao DESC`).all(row.patientId,row.therapistId) as Array<Record<string,any>>;
+ const feedbackRows=db.prepare(`SELECT f.id,f.protocolo_etapa_id AS stepId,f.dt_feedback AS feedbackAt,
+  f.percepcao_melhora AS improvementPerception,f.sugestao AS suggestion,f.avaliacao_melhora AS improvementRating
+  FROM FEEDBACK f JOIN PROTOCOLO_ETAPA st ON st.id=f.protocolo_etapa_id JOIN PROTOCOLO p ON p.id=st.protocolo_id
+  JOIN DIAGNOSTICO d ON d.id=p.diagnostico_id WHERE d.paciente_id=? AND d.terapeuta_id=? ORDER BY f.id DESC`).all(row.patientId,row.therapistId) as Array<Record<string,any>>;
+ const feedbackByStep=new Map<string,Record<string,any>>();for(const feedback of feedbackRows){const key=String(feedback.stepId);if(!feedbackByStep.has(key))feedbackByStep.set(key,{...feedback,id:String(feedback.id)});}
  const attachments=db.prepare("SELECT id,arquivo,descricao,dt_atualizacao FROM ANEXO WHERE atendimento_id=? ORDER BY id").all(attendance.id) as Array<{id:number;arquivo:string;descricao:string|null;dt_atualizacao:string|null}>;
  return {appointment:{...base},attendance:{id:String(attendance.id),chartId:String(db.prepare("SELECT id FROM PRONTUARIO WHERE atendimento_id=?").pluck().get(attendance.id)??""),attendedAt:attendance.dt_atend,status:statusName(Number(attendance.status)),notes:null,startedAt:attendance.dt_inicio_real??attendance.dt_atend,examRequested:Number(attendance.exames_solicitados??0)===1},questions,
   anamneses:anamneses.map(a=>({id:String(a.id),type:"Anamnese",description:a.description??"",registeredAt:a.registeredAt,answers:(answerQuery.all(a.id) as Array<Record<string,any>>).map(answer=>({...answer,questionId:String(answer.questionId),answer:answer.answer??""}))})),
-  diagnoses:diagnoses.map(d=>({...d,id:String(d.id)})),protocolCatalog:[...catalogMap.values()],protocols:protocols.map(p=>({...p,diagnosisProtocolId:String(p.diagnosisProtocolId),diagnosisId:String(p.diagnosisId),protocolId:String(p.protocolId),stepId:String(p.stepId),status:statusMap(p.status)})),
-  protocolOptions:protocolOptions(row.therapyId,clinicId),evolutions:evolutions.map(e=>({...e,id:String(e.id),diagnosisProtocolId:String(e.diagnosisProtocolId),status:statusMap(e.status),authorName:row.therapistName})),
+  diagnoses:diagnoses.map(d=>({...d,id:String(d.id)})),protocolCatalog:[...catalogMap.values()],
+  protocolOptions:protocolOptions(row.therapyId,clinicId),protocols:protocols.map(p=>({...p,diagnosisProtocolId:String(p.diagnosisProtocolId),diagnosisId:String(p.diagnosisId),protocolId:String(p.protocolId),stepId:String(p.stepId),status:statusMap(p.status),feedback:feedbackByStep.get(String(p.stepId))??null})),
+  evolutions:evolutions.map(e=>({...e,id:String(e.id),diagnosisProtocolId:String(e.diagnosisProtocolId),status:statusMap(e.status),authorName:row.therapistName})),
   attachments:attachments.map(a=>{const meta=JSON.parse(a.arquivo) as {originalFilename:string;contentType:string;sizeBytes:number;type:"EXAM"|"TONGUE_PHOTO"};return {id:String(a.id),...meta,description:a.descricao,uploadedAt:a.dt_atualizacao,url:`/api/v1/encounters/attachments/${a.id}/download`};})};
 }
 function protocolOptions(therapyId:number,clinicId:number){
@@ -177,4 +183,18 @@ encounterRouter.post("/encounters/:appointmentId/evolutions",requireAuth,require
  const statusIds:Record<string,number>={ACTIVE:1,INACTIVE:2,CONFIRMED:3,CANCELLED:4,RESCHEDULED:5,WAITING:6,IN_PROGRESS:7,PAID:8};
  const id=db.prepare("INSERT INTO EVOLUCAO(diagnostico_protocolo_id,descricao,dt_evolucao,status) VALUES(?,?,?,?)").run(input.diagnosisProtocolId,input.description,evolvedAt,statusIds[input.status??"IN_PROGRESS"]).lastInsertRowid;
  response.status(201).json({id:String(id),...input,evolvedAt});
+}catch(e){next(e);}});
+encounterRouter.post("/encounters/:appointmentId/protocol-stages/:diagnosisProtocolId/feedback",requireAuth,requireRole("PATIENT"),(request,response,next)=>{try{
+ const auth=getAuth(request);const row=appointment(Number(request.params.appointmentId),Number(auth.clinicId));guard(row,auth);
+ const input=z.object({feedbackAt:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value=>!Number.isNaN(Date.parse(`${value}T00:00:00Z`))&&new Date(`${value}T00:00:00Z`).toISOString().slice(0,10)===value),improvementPerception:z.string().trim().min(1).max(2000),suggestion:z.string().trim().max(2000),improvementRating:z.number().int().min(1).max(5)}).parse(request.body);
+ const diagnosisProtocolId=z.coerce.number().positive().parse(request.params.diagnosisProtocolId);
+ const stage=db.prepare(`SELECT st.id FROM DIAGNOSTICO_PROTOCOLO dp JOIN PROTOCOLO_ETAPA st ON st.id=dp.protocolo_etapa_id JOIN PROTOCOLO p ON p.id=st.protocolo_id JOIN DIAGNOSTICO d ON d.id=dp.diagnostico_id
+  WHERE dp.id=? AND d.paciente_id=? AND d.terapeuta_id=? AND p.terapeuta_id=? AND EXISTS(SELECT 1 FROM EVOLUCAO e WHERE e.diagnostico_protocolo_id=dp.id)`).get(diagnosisProtocolId,row.patientId,row.therapistId,row.therapistId) as {id:number}|undefined;
+ if(!stage)throw new HttpError(404,"PROTOCOL_STAGE_NOT_FOUND","Etapa nÃ£o encontrada para este atendimento.");
+ const existing=db.prepare(`SELECT f.id FROM FEEDBACK f JOIN PROTOCOLO_ETAPA st ON st.id=f.protocolo_etapa_id JOIN PROTOCOLO p ON p.id=st.protocolo_id JOIN DIAGNOSTICO d ON d.id=p.diagnostico_id
+  WHERE f.protocolo_etapa_id=? AND d.paciente_id=? AND d.terapeuta_id=? ORDER BY f.id DESC LIMIT 1`).get(stage.id,row.patientId,row.therapistId) as {id:number}|undefined;
+ let feedbackId:number;
+ if(existing){db.prepare("UPDATE FEEDBACK SET dt_feedback=?,percepcao_melhora=?,sugestao=?,avaliacao_melhora=? WHERE id=?").run(input.feedbackAt,input.improvementPerception,input.suggestion||null,input.improvementRating,existing.id);feedbackId=existing.id;}
+ else feedbackId=Number(db.prepare("INSERT INTO FEEDBACK(protocolo_etapa_id,dt_feedback,percepcao_melhora,sugestao,avaliacao_melhora) VALUES(?,?,?,?,?)").run(stage.id,input.feedbackAt,input.improvementPerception,input.suggestion||null,input.improvementRating).lastInsertRowid);
+ response.status(existing?200:201).json({id:String(feedbackId),...input});
 }catch(e){next(e);}});

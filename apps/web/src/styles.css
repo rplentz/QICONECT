@@ -243,6 +243,18 @@ h3 { margin-bottom: 8px; font-size: 1.03rem; }
 .encounter-evolution-stage { display: grid; gap: 10px; padding: 12px; border: 1px solid #e5ece5; border-radius: 9px; background: #fff; }
 .encounter-stage-evolutions { display: grid; gap: 8px; padding-left: 12px; }
 .encounter-stage-evolutions .encounter-timeline-item { padding: 12px; }
+.patient-stage-feedback { display: grid; gap: 7px; padding: 13px; border: 1px solid #dce9de; border-radius: 9px; background: #f7fbf7; color: #405447; font-size: 0.78rem; }
+.patient-stage-feedback p { margin: 0; line-height: 1.5; }
+.patient-stage-feedback-actions { display: flex; justify-content: flex-end; }
+.patient-stage-feedback-form { display: grid; gap: 12px; padding: 15px; border: 1px solid #e4ece4; border-radius: 10px; background: #fbfdfb; }
+.patient-stage-feedback-form h4 { margin: 0; }
+.feedback-rating-fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.feedback-rating-fieldset legend { margin-bottom: 8px; color: #35473b; font-size: 0.76rem; font-weight: 600; }
+.feedback-rating-options { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 7px; }
+.feedback-rating-option { display: grid; min-height: 62px; justify-items: center; align-content: center; gap: 4px; padding: 6px 4px; border: 1px solid #dfe7df; border-radius: 9px; background: #fff; color: #526357; cursor: pointer; }
+.feedback-rating-option > span { font-size: 1.2rem; }
+.feedback-rating-option small { font-size: 0.65rem; text-align: center; }
+.feedback-rating-option.selected { border-color: #4e805d; background: #edf5ee; color: #24563a; box-shadow: inset 0 0 0 1px #4e805d; }
 .encounter-status-field { width: min(230px, 100%); margin-top: 14px; }
 .encounter-protocol-catalog { display: grid; gap: 10px; padding-top: 16px; border-top: 1px solid var(--border); }
 .encounter-protocol-catalog h3 { margin: 0; }
@@ -520,6 +532,7 @@ td strong { color: #35473b; }
 
 @media (max-width: 640px) {
   .dashboard-metric-grid, .dashboard-insights-detail-grid { grid-template-columns: 1fr; }
+  .feedback-rating-options { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .sidebar { position: sticky; inset: auto; width: 64px; height: 100vh; align-items: center; padding: 16px 7px; }
   .brand-lockup { justify-content: center; padding: 0; }
   .brand-lockup > span:last-child, .clinic-switcher, .nav-section-label, .nav-item > span:not(.nav-icon):not(.nav-indicator), .sidebar-bottom { display: none; }

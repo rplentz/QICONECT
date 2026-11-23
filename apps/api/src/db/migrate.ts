@@ -25,6 +25,14 @@ export function migrateDatabase(database: Database.Database): void {
     const attendanceColumns = database.pragma('table_info("ATENDIMENTO")') as Array<{ name: string }>;
     if (attendanceColumns.length > 0 && !attendanceColumns.some((column) => column.name === "dt_inicio_real")) database.exec("ALTER TABLE ATENDIMENTO ADD COLUMN dt_inicio_real TEXT");
     if (attendanceColumns.length > 0 && !attendanceColumns.some((column) => column.name === "exames_solicitados")) database.exec("ALTER TABLE ATENDIMENTO ADD COLUMN exames_solicitados INTEGER NOT NULL DEFAULT 0");
+    database.exec(`CREATE TABLE IF NOT EXISTS FEEDBACK (
+      id INTEGER PRIMARY KEY,
+      protocolo_etapa_id INTEGER NOT NULL REFERENCES PROTOCOLO_ETAPA(id),
+      dt_feedback date,
+      percepcao_melhora TEXT,
+      sugestao TEXT,
+      avaliacao_melhora INTEGER
+    )`);
     return;
   }
 

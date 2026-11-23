@@ -40,6 +40,13 @@ interface EvolutionDiagnosisGroup {
 }
 
 const evolutionStatusLabels = { ...stageStatusLabels };
+const improvementRatings = [
+  { value: 1, face: "😣", label: "Péssimo" },
+  { value: 2, face: "🙁", label: "Mal" },
+  { value: 3, face: "😐", label: "Regular" },
+  { value: 4, face: "🙂", label: "Bem" },
+  { value: 5, face: "😄", label: "Ótimo" },
+];
 
 function formatDate(value: string) {
   const date = new Date(value);
@@ -231,6 +238,8 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
     evolvedAt: today(),
     status: "IN_PROGRESS" as keyof typeof evolutionStatusLabels,
   });
+  const [feedbackStageId, setFeedbackStageId] = useState<string | null>(null);
+  const [feedbackForm, setFeedbackForm] = useState({ feedbackAt: today(), improvementPerception: "", suggestion: "", improvementRating: 3 });
 
   async function load() {
     const result = await apiRequest<EncounterDetails>(`/encounters/${appointmentId}`);
@@ -523,6 +532,28 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
     ).then(() => setEvolutionForm((current) => ({ ...current, description: "", evolvedAt: today() })));
   }
 
+  function openStageFeedback(stage: ProtocolStage) {
+    const feedback = stage.feedback;
+    setFeedbackForm({
+      feedbackAt: feedback?.feedbackAt?.slice(0, 10) ?? today(),
+      improvementPerception: feedback?.improvementPerception ?? "",
+      suggestion: feedback?.suggestion ?? "",
+      improvementRating: feedback?.improvementRating ?? 3,
+    });
+    setFeedbackStageId(stage.diagnosisProtocolId);
+  }
+
+  async function saveStageFeedback(event: FormEvent<HTMLFormElement>, stage: ProtocolStage) {
+    event.preventDefault();
+    const saved = await mutate(
+      `/encounters/${appointmentId}/protocol-stages/${stage.diagnosisProtocolId}/feedback`,
+      "POST",
+      feedbackForm,
+      "Feedback salvo para esta etapa.",
+    );
+    if (saved) setFeedbackStageId(null);
+  }
+
   if (!detail) {
     return (
       <div className="page-content">
@@ -538,6 +569,7 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
   }
 
   const isTherapist = session.activeClinic.role === "THERAPIST";
+  const isPatient = session.activeClinic.role === "PATIENT";
   const canEdit = isTherapist && detail.attendance?.status === "IN_PROGRESS";
   const canUploadAttachments = canEdit || (session.activeClinic.role === "PATIENT" && detail.attendance?.examRequested === true);
   const canStart = isTherapist && (
@@ -908,6 +940,29 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
                               ))}
                             </div>
                           )}
+                          {stage.feedback && <article className="patient-stage-feedback">
+                            <div className="record-topline"><strong>Feedback do paciente</strong><span className="muted">{formatClinicalDate(stage.feedback.feedbackAt)}</span></div>
+                            <p><strong>Avaliação:</strong> {improvementRatings.find((rating) => rating.value === stage.feedback?.improvementRating)?.face} {improvementRatings.find((rating) => rating.value === stage.feedback?.improvementRating)?.label ?? "Não informada"}</p>
+                            {stage.feedback.improvementPerception && <p><strong>Percepção de melhora:</strong> {stage.feedback.improvementPerception}</p>}
+                            {stage.feedback.suggestion && <p><strong>Sugestão:</strong> {stage.feedback.suggestion}</p>}
+                          </article>}
+                          {isPatient && stage.evolutions.length > 0 && <div className="patient-stage-feedback-actions">
+                            <button type="button" className="button button-secondary" disabled={busy} onClick={() => feedbackStageId === stage.diagnosisProtocolId ? setFeedbackStageId(null) : openStageFeedback(stage)}>
+                              {feedbackStageId === stage.diagnosisProtocolId ? "Cancelar feedback" : stage.feedback ? "Atualizar feedback" : "Feedback"}
+                            </button>
+                          </div>}
+                          {isPatient && feedbackStageId === stage.diagnosisProtocolId && <form className="patient-stage-feedback-form" onSubmit={(event) => void saveStageFeedback(event, stage)}>
+                            <h4>Feedback desta etapa</h4>
+                            <div className="form-grid">
+                              <label>Data do feedback<input type="date" required value={feedbackForm.feedbackAt} onChange={(event) => setFeedbackForm({ ...feedbackForm, feedbackAt: event.target.value })} /></label>
+                              <label className="span-two">Como percebeu sua melhora?<textarea required maxLength={2000} rows={3} value={feedbackForm.improvementPerception} onChange={(event) => setFeedbackForm({ ...feedbackForm, improvementPerception: event.target.value })} /></label>
+                              <label className="span-two">Sugestão<textarea maxLength={2000} rows={2} value={feedbackForm.suggestion} onChange={(event) => setFeedbackForm({ ...feedbackForm, suggestion: event.target.value })} /></label>
+                              <fieldset className="span-two feedback-rating-fieldset"><legend>Avalie sua melhora</legend><div className="feedback-rating-options">
+                                {improvementRatings.map((rating) => <button key={rating.value} type="button" className={`feedback-rating-option${feedbackForm.improvementRating === rating.value ? " selected" : ""}`} aria-pressed={feedbackForm.improvementRating === rating.value} onClick={() => setFeedbackForm({ ...feedbackForm, improvementRating: rating.value })}><span aria-hidden="true">{rating.face}</span><small>{rating.value} · {rating.label}</small></button>)}
+                              </div></fieldset>
+                            </div>
+                            <div className="encounter-form-actions"><button className="button button-primary" disabled={busy}>{busy ? "Salvando..." : "Salvar feedback"}</button></div>
+                          </form>}
                         </section>
                       ))}
                     </section>

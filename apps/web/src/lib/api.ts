@@ -152,6 +152,13 @@ export interface EncounterDetails {
     startedAt: string;
     status: Appointment["status"];
     notes: string | null;
+    feedback: {
+      id: string;
+      feedbackAt: string | null;
+      improvementPerception: string | null;
+      suggestion: string | null;
+      improvementRating: number | null;
+    } | null;
   }>;
   protocolOptions: Array<{
     id: string;
