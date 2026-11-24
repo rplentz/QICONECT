@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import logoImage from "../../../../../Documentacao/Logo1.png";
+import logoImage from "../../../../../Documentacao/Logotipo Qi Conecta Luminoso.png";
 
 interface LoginPageProps {
   onLogin: (email: string, password: string) => Promise<void>;

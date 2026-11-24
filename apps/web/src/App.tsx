@@ -11,7 +11,7 @@ import { EncounterDetailPage } from "./features/encounters/EncounterDetailPage.j
 import { TherapistProfilePage } from "./features/therapists/TherapistProfilePage.js";
 import { CatalogPage } from "./features/catalog/CatalogPage.js";
 import { apiRequest, type Session } from "./lib/api.js";
-import logoImage from "../../../Documentacao/Logo3.png";
+import logoImage from "../../../Documentacao/Logo_sozinho_2.png";
 
 type Page = "dashboard" | "appointments" | "encounters" | "patients" | "records" | "settings" | "therapist-profile" | "clients" | "specialties" | "therapies" | `registration:${RegistrationId}` | `encounter:${string}`;
 

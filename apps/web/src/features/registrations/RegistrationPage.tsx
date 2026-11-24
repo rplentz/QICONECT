@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import logoImage from "../../../../../Documentacao/Logo1.png";
+import logoImage from "../../../../../Documentacao/Logotipo Qi Conecta Luminoso.png";
 import { ApiError, apiRequest, type Session } from "../../lib/api.js";
 
 export type RegistrationId =
