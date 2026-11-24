@@ -1,3 +1,5 @@
+import { RescheduleDialog } from "./RescheduleDialog.js";
+import { MaskedInput } from "../../lib/masked-input.js";
 import { useEffect, useState, type FormEvent } from "react";
 import { apiRequest, type Appointment, type Patient, type Session, type Therapist, type Therapy } from "../../lib/api.js";
 
@@ -17,6 +19,7 @@ export function AppointmentsPage({ session }: AppointmentsPageProps) {
   const [form, setForm] = useState({ therapistId: "", therapyId: "", patientId: "", startsAt: "" });
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [rescheduling, setRescheduling] = useState<Appointment | null>(null);
   const [busy, setBusy] = useState(false);
   const canBookForPatient = session.activeClinic.role !== "PATIENT";
 
@@ -84,25 +87,13 @@ export function AppointmentsPage({ session }: AppointmentsPageProps) {
     }
   }
 
-  async function reschedule(appointment: Appointment) {
-    const suggestedDate = new Date(new Date(appointment.startsAt).getTime() + 24 * 60 * 60 * 1000);
-    const suggested = new Date(suggestedDate.getTime() - suggestedDate.getTimezoneOffset() * 60_000)
-      .toISOString()
-      .slice(0, 16);
-    const input = window.prompt("Novo horário local (AAAA-MM-DDTHH:mm):", suggested);
-    if (!input) return;
-    const startsAt = new Date(input);
-    if (Number.isNaN(startsAt.getTime())) {
-      setError("Informe uma data e horário válidos.");
-      return;
-    }
-
+  async function reschedule(appointment: Appointment, startsAt: string) {
     setError("");
     setNotice("");
     try {
       const result = await apiRequest<{ notifications: string }>(`/appointments/${appointment.id}/reschedule`, {
         method: "POST",
-        body: JSON.stringify({ startsAt: startsAt.toISOString() }),
+        body: JSON.stringify({ startsAt }),
       });
       setNotice(
         result.notifications === "NOT_CONFIGURED"
@@ -147,7 +138,7 @@ export function AppointmentsPage({ session }: AppointmentsPageProps) {
             <span className="appointment-time">{formatDate(appointment.startsAt)}</span>
             <span className={`status-pill status-${appointment.status.toLowerCase()}`}>{({ CONFIRMED: "Confirmado", CANCELLED: "Cancelado", RESCHEDULED: "Remarcado", WAITING: "Aguardando", IN_PROGRESS: "Em atendimento", PAID: "Pago", ACTIVE: "Ativo", INACTIVE: "Inativo" } as Record<string, string>)[appointment.status]}</span>
             {showActions && isTherapist && appointment.status === "CONFIRMED" && <button className="button button-success" onClick={() => void markInProgress(appointment)}>Iniciar atendimento</button>}
-            {showActions && <button className="button button-secondary" onClick={() => void reschedule(appointment)}>Remarcar</button>}
+            {showActions && <button className="button button-secondary" onClick={() => setRescheduling(appointment)}>Remarcar</button>}
             {showActions && <button className="button button-danger" onClick={() => void cancel(appointment)}>Cancelar</button>}
           </article>
         ))}
@@ -157,6 +148,10 @@ export function AppointmentsPage({ session }: AppointmentsPageProps) {
 
   return (
     <div className="page-content">
+      {rescheduling && <RescheduleDialog currentStart={rescheduling.startsAt} onCancel={() => setRescheduling(null)} onConfirm={(startsAt) => {
+        setRescheduling(null);
+        void reschedule(rescheduling, startsAt);
+      }} />}
       <div className="page-heading">
         <div><p className="eyebrow">Organização de horários</p><h1>Agenda</h1><p className="muted">Agendamentos da clínica selecionada.</p></div>
       </div>
@@ -176,7 +171,7 @@ export function AppointmentsPage({ session }: AppointmentsPageProps) {
           <label>Terapia<select required value={form.therapyId} onChange={(event) => setForm({ ...form, therapyId: event.target.value })}>
             <option value="">Selecione</option>{therapies.map((therapy) => <option key={therapy.id} value={therapy.id}>{therapy.name} · {therapy.durationMinutes} min</option>)}
           </select></label>
-          <label>Data e horário<input type="datetime-local" required min={new Date().toISOString().slice(0, 16)} value={form.startsAt} onChange={(event) => setForm({ ...form, startsAt: event.target.value })} /></label>
+          <label>Data e horário<MaskedInput mask="datetime-local" required min={new Date().toISOString().slice(0, 16)} value={form.startsAt} onValueChange={(value) => setForm({ ...form, startsAt: value })} /></label>
         </div>
         <button className="button button-primary" disabled={busy}>{busy ? "Confirmando..." : "Confirmar agendamento"}</button>
       </form>

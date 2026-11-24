@@ -1,3 +1,4 @@
+import { MaskedInput } from "../../lib/masked-input.js";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { apiRequest, type EncounterDetails, type Session } from "../../lib/api.js";
 
@@ -761,7 +762,7 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
           {canEdit && (
             <form className="form-panel" onSubmit={saveDiagnosis}>
               <div className="form-grid">
-                <label>Data do diagnóstico<input type="date" required value={diagnosisForm.diagnosedAt} onChange={(event) => setDiagnosisForm({ ...diagnosisForm, diagnosedAt: event.target.value })} /></label>
+                <label>Data do diagnóstico<MaskedInput mask="date" required value={diagnosisForm.diagnosedAt} onValueChange={(value) => setDiagnosisForm({ ...diagnosisForm, diagnosedAt: value })} /></label>
                 <label className="span-two">Descrição<textarea required minLength={2} maxLength={4000} rows={4} value={diagnosisForm.description} onChange={(event) => setDiagnosisForm({ ...diagnosisForm, description: event.target.value })} /></label>
               </div>
               <div className="encounter-form-actions"><button className="button button-primary" disabled={busy}>{busy ? "Salvando..." : "Registrar diagnóstico"}</button></div>
@@ -801,7 +802,7 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
             <div className="panel-heading"><div><h3>Etapas de {stageProtocol.name}</h3><p className="muted">Adicione as etapas do protocolo. Cada nova etapa recebe a próxima sequência automaticamente.</p></div></div>
             <form className="form-panel" onSubmit={saveProtocolStage}>
               <label>Descrição da etapa<textarea required minLength={2} maxLength={1000} rows={2} value={newStageForm.description} onChange={(event) => setNewStageForm({ ...newStageForm, description: event.target.value })} /></label>
-              <div className="form-grid"><label>Data inicial<input type="date" value={newStageForm.startsAt} onChange={(event) => setNewStageForm({ ...newStageForm, startsAt: event.target.value })} /></label><label>Data final<input type="date" value={newStageForm.endsAt} onChange={(event) => setNewStageForm({ ...newStageForm, endsAt: event.target.value })} /></label></div>
+              <div className="form-grid"><label>Data inicial<MaskedInput mask="date" value={newStageForm.startsAt} onValueChange={(value) => setNewStageForm({ ...newStageForm, startsAt: value })} /></label><label>Data final<MaskedInput mask="date" value={newStageForm.endsAt} onValueChange={(value) => setNewStageForm({ ...newStageForm, endsAt: value })} /></label></div>
               <label>Observações<textarea maxLength={2000} rows={2} value={newStageForm.notes} onChange={(event) => setNewStageForm({ ...newStageForm, notes: event.target.value })} /></label>
               <div className="encounter-form-actions"><button className="button button-primary" disabled={busy}>{busy ? "Salvando..." : "Adicionar etapa"}</button></div>
             </form>
@@ -900,7 +901,7 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
                     return <option key={item.diagnosisProtocolId} value={item.diagnosisProtocolId} disabled={!eligibility.allowed}>{item.protocolName} · Etapa {item.sequence}: {item.stepDescription}{eligibility.missingSequence ? ` (aguarda evolução da etapa ${eligibility.missingSequence})` : ""}</option>;
                   })}
                 </select></label>
-                <label>Data<input type="date" required min={selectedEvolutionEligibility?.minDate ?? undefined} value={evolutionForm.evolvedAt} onChange={(event) => setEvolutionForm({ ...evolutionForm, evolvedAt: event.target.value })} /></label>
+                <label>Data<MaskedInput mask="date" required min={selectedEvolutionEligibility?.minDate ?? undefined} value={evolutionForm.evolvedAt} onValueChange={(value) => setEvolutionForm({ ...evolutionForm, evolvedAt: value })} /></label>
                 <label>Status<select value={evolutionForm.status} onChange={(event) => setEvolutionForm({ ...evolutionForm, status: event.target.value as keyof typeof evolutionStatusLabels })}>
                   {Object.entries(evolutionStatusLabels).map(([status, label]) => <option key={status} value={status}>{label}</option>)}
                 </select></label>
@@ -954,7 +955,7 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
                           {isPatient && feedbackStageId === stage.diagnosisProtocolId && <form className="patient-stage-feedback-form" onSubmit={(event) => void saveStageFeedback(event, stage)}>
                             <h4>Feedback desta etapa</h4>
                             <div className="form-grid">
-                              <label>Data do feedback<input type="date" required value={feedbackForm.feedbackAt} onChange={(event) => setFeedbackForm({ ...feedbackForm, feedbackAt: event.target.value })} /></label>
+                              <label>Data do feedback<MaskedInput mask="date" required value={feedbackForm.feedbackAt} onValueChange={(value) => setFeedbackForm({ ...feedbackForm, feedbackAt: value })} /></label>
                               <label className="span-two">Como percebeu sua melhora?<textarea required maxLength={2000} rows={3} value={feedbackForm.improvementPerception} onChange={(event) => setFeedbackForm({ ...feedbackForm, improvementPerception: event.target.value })} /></label>
                               <label className="span-two">Sugestão<textarea maxLength={2000} rows={2} value={feedbackForm.suggestion} onChange={(event) => setFeedbackForm({ ...feedbackForm, suggestion: event.target.value })} /></label>
                               <fieldset className="span-two feedback-rating-fieldset"><legend>Avalie sua melhora</legend><div className="feedback-rating-options">
