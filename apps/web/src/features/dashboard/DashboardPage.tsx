@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { MaskedInput } from "../../lib/masked-input.js";
 import { ApiError, apiRequest, type Appointment, type Session } from "../../lib/api.js";
 
 interface DashboardData {
@@ -113,6 +114,7 @@ function errorMessage(reason: unknown): string {
 export function DashboardPage({ session, onOpenPatientEncounters, onOpenEncounter }: DashboardPageProps) {
   const [data, setData] = useState<DashboardData>();
   const [selectedDate, setSelectedDate] = useState(() => clinicDate(session.activeClinic.timezone));
+  const [dateInput, setDateInput] = useState(selectedDate);
   const [loadingAppointments, setLoadingAppointments] = useState(true);
   const [error, setError] = useState("");
   const [selectedProtocol, setSelectedProtocol] = useState<ProtocolSelection | null>(null);
@@ -336,13 +338,13 @@ export function DashboardPage({ session, onOpenPatientEncounters, onOpenEncounte
           </div>
           <label className="dashboard-date-filter">
             Data da agenda
-            <input
-              aria-label="Data da agenda"
-              type="date"
-              value={selectedDate}
-              onChange={(event) => {
-                if (event.target.value) {
-                  setSelectedDate(event.target.value);
+            <MaskedInput
+              mask="date"
+              value={dateInput}
+              onValueChange={(value) => {
+                setDateInput(value);
+                if (value.includes("-")) {
+                  setSelectedDate(value);
                   setSelectedProtocol(null);
                 }
               }}

@@ -1,3 +1,4 @@
+import { digitsOnly, formatCpf, formatPhone, MaskedInput } from "../../lib/masked-input.js";
 import { useEffect, useState, type FormEvent } from "react";
 import { apiRequest, type EncounterSummary, type Patient, type Session } from "../../lib/api.js";
 
@@ -13,28 +14,6 @@ interface PatientsPageProps {
 
 const emptyForm = { fullName: "", email: "", phone: "", password: "", birthDate: "", cpf: "" };
 const emptyUpdateForm = { fullName: "", email: "", phone: "", birthDate: "", cpf: "" };
-
-function digitsOnly(value: string) {
-  return value.replace(/\D/g, "");
-}
-
-function formatCpf(value: string) {
-  const digits = digitsOnly(value).slice(0, 11);
-  return digits
-    .replace(/(\d{3})(\d)/, "$1.$2")
-    .replace(/(\d{3})(\d)/, "$1.$2")
-    .replace(/(\d{3})(\d{1,2})$/, "$1-$2");
-}
-
-function formatPhone(value: string) {
-  let digits = digitsOnly(value);
-  if (digits.startsWith("55") && digits.length > 11) digits = digits.slice(2);
-  digits = digits.slice(0, 11);
-  if (digits.length <= 2) return digits ? `(${digits}` : "";
-  if (digits.length <= 6) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
-  if (digits.length <= 10) return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
-  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
-}
 
 function displayPhone(value: string | null | undefined) {
   return value ? formatPhone(value) : "—";
@@ -176,9 +155,9 @@ export function PatientsPage({ session, selectedPatientId, onSelectPatient, onCl
               <div className="profile-update-heading"><strong>Dados atuais</strong><strong>Nova informação</strong></div>
               <div className="profile-update-row"><label>Nome completo<input readOnly value={patients[0].fullName} /></label><label>Nome completo<input value={updateForm.fullName} onChange={(event) => setUpdateForm({ ...updateForm, fullName: event.target.value })} placeholder="Informe o novo nome" /></label></div>
               <div className="profile-update-row"><label>E-mail<input readOnly value={patients[0].email} /></label><label>E-mail<input type="email" value={updateForm.email} onChange={(event) => setUpdateForm({ ...updateForm, email: event.target.value })} placeholder="Informe o novo e-mail" /></label></div>
-              <div className="profile-update-row"><label>Telefone<input readOnly value={displayPhone(patients[0].phone)} /></label><label>Telefone<input type="tel" inputMode="tel" maxLength={15} value={updateForm.phone} onChange={(event) => setUpdateForm({ ...updateForm, phone: formatPhone(event.target.value) })} placeholder="(48) 99999-9999" /></label></div>
-              <div className="profile-update-row"><label>CPF<input readOnly value={patients[0].cpf ? formatCpf(patients[0].cpf) : ""} /></label><label>CPF<input inputMode="numeric" maxLength={14} value={updateForm.cpf} onChange={(event) => setUpdateForm({ ...updateForm, cpf: formatCpf(event.target.value) })} placeholder="000.000.000-00" /></label></div>
-              <div className="profile-update-row"><label>Data de nascimento<input readOnly value={patients[0].birthDate ? new Intl.DateTimeFormat("pt-BR").format(new Date(`${patients[0].birthDate}T12:00:00`)) : ""} /></label><label>Data de nascimento<input type="date" value={updateForm.birthDate} onChange={(event) => setUpdateForm({ ...updateForm, birthDate: event.target.value })} /></label></div>
+              <div className="profile-update-row"><label>Telefone<input readOnly value={displayPhone(patients[0].phone)} /></label><label>Telefone<MaskedInput mask="phone" value={updateForm.phone} onValueChange={(value) => setUpdateForm({ ...updateForm, phone: value })} /></label></div>
+              <div className="profile-update-row"><label>CPF<input readOnly value={patients[0].cpf ? formatCpf(patients[0].cpf) : ""} /></label><label>CPF<MaskedInput mask="cpf" value={updateForm.cpf} onValueChange={(value) => setUpdateForm({ ...updateForm, cpf: value })} /></label></div>
+              <div className="profile-update-row"><label>Data de nascimento<input readOnly value={patients[0].birthDate ? new Intl.DateTimeFormat("pt-BR").format(new Date(`${patients[0].birthDate}T12:00:00`)) : ""} /></label><label>Data de nascimento<MaskedInput mask="date" value={updateForm.birthDate} onValueChange={(value) => setUpdateForm({ ...updateForm, birthDate: value })} /></label></div>
             </div>
             <div className="encounter-form-actions"><button className="button button-primary">Salvar alterações</button></div>
           </form>
@@ -190,9 +169,9 @@ export function PatientsPage({ session, selectedPatientId, onSelectPatient, onCl
           <div className="form-grid">
             <label>Nome completo<input required minLength={2} value={form.fullName} onChange={(event) => setForm({ ...form, fullName: event.target.value })} /></label>
             <label>E-mail<input required type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} /></label>
-            <label>Telefone<input type="tel" inputMode="tel" maxLength={15} placeholder="(48) 99999-9999" value={form.phone} onChange={(event) => setForm({ ...form, phone: formatPhone(event.target.value) })} /></label>
-            <label>Nascimento<input type="date" value={form.birthDate} onChange={(event) => setForm({ ...form, birthDate: event.target.value })} /></label>
-            <label>CPF<input inputMode="numeric" maxLength={14} placeholder="000.000.000-00" value={form.cpf} onChange={(event) => setForm({ ...form, cpf: formatCpf(event.target.value) })} /></label>
+            <label>Telefone<MaskedInput mask="phone" value={form.phone} onValueChange={(value) => setForm({ ...form, phone: value })} /></label>
+            <label>Nascimento<MaskedInput mask="date" value={form.birthDate} onValueChange={(value) => setForm({ ...form, birthDate: value })} /></label>
+            <label>CPF<MaskedInput mask="cpf" value={form.cpf} onValueChange={(value) => setForm({ ...form, cpf: value })} /></label>
             <label>Senha inicial<input required type="password" minLength={10} value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} /></label>
           </div>
           <button className="button button-primary">Salvar paciente</button>

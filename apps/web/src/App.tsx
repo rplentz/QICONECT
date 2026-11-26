@@ -127,7 +127,7 @@ export function App() {
       <aside className="sidebar">
         <a className="brand-lockup" href="#" onClick={(event) => { event.preventDefault(); setPage("dashboard"); }}>
           <img className="brand-image" src={logoImage} alt="" />
-          <span><strong>QIConect</strong><small>Saúde integrativa</small></span>
+          <span><strong>QIConecta</strong><small>Harmonizando Vidas!</small></span>
         </a>
         <div className="clinic-switcher">
           <span className="eyebrow">Espaço de trabalho</span>

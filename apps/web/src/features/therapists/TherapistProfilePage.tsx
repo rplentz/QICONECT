@@ -1,3 +1,4 @@
+import { MaskedInput } from "../../lib/masked-input.js";
 import { useEffect, useState, type FormEvent } from "react";
 import { apiRequest, type Session } from "../../lib/api.js";
 
@@ -18,7 +19,7 @@ export function TherapistProfilePage({ session }: { session: Session }) {
     .catch((reason) => setError(reason instanceof Error ? reason.message : "Não foi possível carregar o cadastro.")); }, []);
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!profile) return; setBusy(true); setError(""); setNotice("");
-    try { await apiRequest("/therapist-profile", { method: "PUT", body: JSON.stringify({ ...profile, specialtyIds: selected }) }); setNotice("Dados cadastrais atualizados."); }
+    try { await apiRequest("/therapist-profile", { method: "PUT", body: JSON.stringify({ ...profile, cpf: profile.cpf ?? undefined, specialtyIds: selected }) }); setNotice("Dados cadastrais atualizados."); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "Não foi possível salvar."); }
     finally { setBusy(false); }
   }
@@ -30,7 +31,7 @@ export function TherapistProfilePage({ session }: { session: Session }) {
       <div className="form-grid">
         <label>Nome completo<input required minLength={2} maxLength={120} value={profile.fullName} onChange={(event) => setProfile({ ...profile, fullName: event.target.value })} /></label>
         <label>E-mail<input required type="email" value={profile.email} onChange={(event) => setProfile({ ...profile, email: event.target.value })} /></label>
-        <label>CPF<input value={profile.cpf ?? ""} onChange={(event) => setProfile({ ...profile, cpf: event.target.value })} /></label>
+        <label>CPF<MaskedInput mask="cpf" value={profile.cpf ?? ""} onValueChange={(value) => setProfile({ ...profile, cpf: value })} /></label>
         <label>Registro profissional<input value={profile.professionalRegistration ?? ""} onChange={(event) => setProfile({ ...profile, professionalRegistration: event.target.value })} /></label>
         <label className="form-grid-full">Formação<input value={profile.formation ?? ""} onChange={(event) => setProfile({ ...profile, formation: event.target.value })} /></label>
       </div>

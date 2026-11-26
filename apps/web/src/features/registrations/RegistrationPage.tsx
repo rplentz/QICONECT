@@ -1,3 +1,5 @@
+import { RescheduleDialog } from "../appointments/RescheduleDialog.js";
+import { MaskedInput } from "../../lib/masked-input.js";
 import { useEffect, useState, type FormEvent } from "react";
 import logoImage from "../../../../../Documentacao/Logotipo Qi Conecta Luminoso.png";
 import { ApiError, apiRequest, type Session } from "../../lib/api.js";
@@ -372,6 +374,7 @@ export function RegistrationPage({ resource, session }: RegistrationPageProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [selectedProtocolId, setSelectedProtocolId] = useState("");
   const [error, setError] = useState("");
+  const [rescheduling, setRescheduling] = useState<RegistrationRecord | null>(null);
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -566,11 +569,11 @@ export function RegistrationPage({ resource, session }: RegistrationPageProps) {
     }
   }
 
-  async function appointmentAction(record: RegistrationRecord, action: "cancel" | "reschedule") {
+  async function appointmentAction(record: RegistrationRecord, startsAt?: string) {
     setError("");
     setNotice("");
     try {
-      if (action === "cancel") {
+      if (!startsAt) {
         const reason = window.prompt("Informe o motivo do cancelamento:");
         if (!reason?.trim()) return;
         await apiRequest(`/appointments/${encodeURIComponent(record.id)}/cancel`, {
@@ -579,15 +582,9 @@ export function RegistrationPage({ resource, session }: RegistrationPageProps) {
         });
         setNotice("Agendamento cancelado.");
       } else {
-        const suggestedDate = new Date(new Date(String(record.startsAt)).getTime() + 24 * 60 * 60 * 1000);
-        const suggested = new Date(suggestedDate.getTime() - suggestedDate.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
-        const input = window.prompt("Novo horário local (AAAA-MM-DDTHH:mm):", suggested);
-        if (!input) return;
-        const startsAt = new Date(input);
-        if (Number.isNaN(startsAt.getTime())) throw new Error("Informe uma data e horário válidos.");
         await apiRequest(`/appointments/${encodeURIComponent(record.id)}/reschedule`, {
           method: "POST",
-          body: JSON.stringify({ startsAt: startsAt.toISOString() }),
+          body: JSON.stringify({ startsAt }),
         });
         setNotice("Agendamento remarcado.");
       }
@@ -604,6 +601,10 @@ export function RegistrationPage({ resource, session }: RegistrationPageProps) {
 
   return (
     <div className="page-content registration-page">
+      {rescheduling && <RescheduleDialog currentStart={String(rescheduling.startsAt)} onCancel={() => setRescheduling(null)} onConfirm={(startsAt) => {
+        setRescheduling(null);
+        void appointmentAction(rescheduling, startsAt);
+      }} />}
       <header className="registration-brand">
         <img src={logoImage} alt="QIConect" />
         <div className="registration-brand-copy">
@@ -707,10 +708,13 @@ export function RegistrationPage({ resource, session }: RegistrationPageProps) {
                 </label>
               );
             }
+            const mask = field.name === "cpf" ? "cpf" : field.type === "tel" ? "phone" :
+              field.type === "date" || field.type === "datetime-local" ? field.type : null;
             return (
               <label key={field.name}>
                 {field.label}
-                <input
+                {mask ? <MaskedInput mask={mask} required={required} value={String(value)}
+                  onValueChange={(nextValue) => setForm({ ...form, [field.name]: nextValue })} /> : <input
                   type={field.type}
                   required={required}
                   min={field.min}
@@ -719,7 +723,7 @@ export function RegistrationPage({ resource, session }: RegistrationPageProps) {
                   minLength={field.type === "password" && !editingId ? 10 : undefined}
                   value={String(value)}
                   onChange={(event) => setForm({ ...form, [field.name]: event.target.value })}
-                />
+                />}
                 {field.hint && <small className="field-hint">{field.hint}</small>}
               </label>
             );
@@ -792,8 +796,8 @@ export function RegistrationPage({ resource, session }: RegistrationPageProps) {
                       )}
                       {resource === "agenda" && record.status === "CONFIRMED" && (
                         <>
-                          <button type="button" className="button button-secondary button-small" onClick={() => void appointmentAction(record, "reschedule")}>Remarcar</button>
-                          <button type="button" className="button button-danger button-small" onClick={() => void appointmentAction(record, "cancel")}>Cancelar</button>
+                          <button type="button" className="button button-secondary button-small" onClick={() => setRescheduling(record)}>Remarcar</button>
+                          <button type="button" className="button button-danger button-small" onClick={() => void appointmentAction(record)}>Cancelar</button>
                         </>
                       )}
                       {resource !== "agenda" && "active" in record && (
@@ -903,8 +907,8 @@ function ProtocolStepsPanel({ protocols, selectedProtocolId, onSelect, onChanged
               {error && <p className="alert alert-error">{error}</p>}
               <form className="protocol-step-form" onSubmit={addStep}>
                 <label>Sequência<input type="number" min={1} required value={sequence} onChange={(event) => setSequence(event.target.value)} /></label>
-                <label>Data inicial<input type="date" value={startsAt} onChange={(event) => setStartsAt(event.target.value)} /></label>
-                <label>Data final<input type="date" value={endsAt} onChange={(event) => setEndsAt(event.target.value)} /></label>
+                <label>Data inicial<MaskedInput mask="date" value={startsAt} onValueChange={setStartsAt} /></label>
+                <label>Data final<MaskedInput mask="date" value={endsAt} onValueChange={setEndsAt} /></label>
                 <label>Descrição<input required minLength={2} value={description} onChange={(event) => setDescription(event.target.value)} /></label>
                 <label>Observações<input value={notes} onChange={(event) => setNotes(event.target.value)} /></label>
                 <button className="button button-primary">Adicionar etapa</button>
