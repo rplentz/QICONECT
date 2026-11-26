@@ -3,7 +3,7 @@ import { db } from "./database.js";
 export async function seedDemoData(): Promise<void> {
   if (db.prepare("SELECT id FROM CLINICA LIMIT 1").get()) return;
   const seed = db.transaction(() => {
-    db.prepare("INSERT INTO STATUS(id,nome) VALUES (1,'Ativo'),(2,'Inativo'),(3,'Confirmado'),(4,'Cancelado'),(5,'Remarcado'),(6,'Aguardando'),(7,'Em atendimento'),(8,'Pago')").run();
+    db.prepare("INSERT INTO STATUS(id,nome) VALUES (1,'Ativo'),(2,'Inativo'),(3,'Confirmado'),(4,'Cancelado'),(5,'Remarcado'),(6,'Aguardando'),(7,'Em atendimento'),(8,'Pago'),(9,'Finalizado')").run();
     db.prepare("INSERT INTO PERFIL(id,nome) VALUES (1,'Administrador'),(2,'Empresa'),(3,'Terapeuta'),(4,'Paciente')").run();
     db.prepare("INSERT INTO CLINICA(id,nome,cnpj,email,telefone,endereco,status,dt_registro,dt_atualizacao) VALUES (1,'Clínica QIConect','12.345.678/0001-99','contato@qiconect.com.br','(48)99999-0000','Florianópolis/SC',1,datetime('now'),datetime('now'))").run();
     const users = [

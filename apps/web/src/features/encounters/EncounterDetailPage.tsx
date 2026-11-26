@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { apiRequest, type EncounterDetails, type Session } from "../../lib/api.js";
+import logoImage from "../../../../../Documentacao/Logo1.png";
 
 type EncounterTab = "anamnesis" | "diagnosis" | "protocol" | "evolutions";
 
@@ -18,7 +19,7 @@ const tabs: Array<{ id: EncounterTab; label: string }> = [
 
 const stageStatusLabels = {
   ACTIVE: "Ativo", INACTIVE: "Inativo", CONFIRMED: "Confirmada", CANCELLED: "Cancelada",
-  RESCHEDULED: "Remarcada", WAITING: "Aguardando", IN_PROGRESS: "Em atendimento", PAID: "Pago",
+  RESCHEDULED: "Remarcada", WAITING: "Aguardando", IN_PROGRESS: "Em atendimento", PAID: "Pago", FINALIZED: "Finalizado",
 } as const;
 
 type ProtocolStage = EncounterDetails["protocols"][number];
@@ -58,9 +59,11 @@ function formatDate(value: string) {
 function formatClinicalDate(value: string | null | undefined) {
   if (!value) return "Data não informada";
   const date = new Date(/^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T12:00:00` : value);
-  return Number.isNaN(date.getTime())
-    ? "Data não informada"
-    : new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium" }).format(date);
+  if (Number.isNaN(date.getTime())) return "Data não informada";
+  const day = new Intl.DateTimeFormat("pt-BR", { day: "numeric", timeZone: "UTC" }).format(date);
+  const month = new Intl.DateTimeFormat("pt-BR", { month: "short", timeZone: "UTC" }).format(date).replace(/\.$/, "");
+  const year = new Intl.DateTimeFormat("pt-BR", { year: "numeric", timeZone: "UTC" }).format(date);
+  return `${day} de ${month.charAt(0).toLocaleUpperCase("pt-BR")}${month.slice(1)}. de ${year}`;
 }
 
 function groupProtocolsByDiagnosis(stages: ProtocolStage[]): DiagnosisProtocolGroup[] {
@@ -205,13 +208,46 @@ async function fileToBase64(file: File) {
   return btoa(binary);
 }
 
+function escapeHtml(value: unknown): string {
+  return String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[character] ?? character);
+}
+
+function printProntuario(detail: EncounterDetails, clinicName: string) {
+  const generatedAt = new Date().toLocaleString("pt-BR", { dateStyle: "long", timeStyle: "short" });
+  const statusLabels: Record<string, string> = { ACTIVE: "Ativo", INACTIVE: "Inativo", CONFIRMED: "Confirmado", CANCELLED: "Cancelado", RESCHEDULED: "Remarcado", WAITING: "Aguardando", IN_PROGRESS: "Em atendimento", PAID: "Pago", FINALIZED: "Finalizado" };
+  const currentStatus = detail.attendance?.status ?? detail.appointment.appointmentStatus;
+  const events: Array<{ date: string; title: string; content: string }> = [];
+  for (const item of detail.anamneses) {
+    events.push({ date: item.registeredAt, title: item.type || "Anamnese", content: `${item.description}\n${item.answers.map((answer) => `${answer.question}: ${answer.answer || "Sem resposta"}`).join("\n")}` });
+  }
+  for (const item of detail.diagnoses) events.push({ date: item.diagnosedAt ?? "", title: "Diagnóstico", content: item.description });
+  for (const item of detail.protocols) events.push({ date: item.startedAt, title: `Protocolo: ${item.protocolName} — etapa ${item.sequence}`, content: `${item.stepDescription}\nDiagnóstico: ${item.diagnosisDescription}${item.notes ? `\nObservações: ${item.notes}` : ""}` });
+  for (const item of detail.evolutions) events.push({ date: item.evolvedAt ?? "", title: `Evolução: ${item.protocolName} — etapa ${item.sequence}`, content: item.description });
+  for (const item of detail.protocols) if (item.feedback) events.push({ date: item.feedback.feedbackAt ?? "", title: `Feedback do paciente: ${item.protocolName} — etapa ${item.sequence}`, content: `Avaliação: ${item.feedback.improvementRating ?? "Não informada"}/5\nPercepção: ${item.feedback.improvementPerception ?? "—"}\nSugestão: ${item.feedback.suggestion ?? "—"}` });
+  for (const item of detail.attachments) events.push({ date: item.uploadedAt ?? "", title: `Anexo: ${item.originalFilename}`, content: `${item.type === "EXAM" ? "Exame" : "Foto da língua"}${item.description ? `\nDescrição: ${item.description}` : ""}` });
+  events.sort((first, second) => (Date.parse(first.date) || 0) - (Date.parse(second.date) || 0));
+  const popup = window.open("", "_blank", "width=900,height=700");
+  if (!popup) return;
+  popup.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Prontuário - ${escapeHtml(detail.appointment.patientName)}</title><style>body{font:14px Arial,sans-serif;color:#18251d;max-width:850px;margin:36px auto;line-height:1.5}header{display:flex;align-items:center;gap:16px;margin-bottom:22px}header img{width:64px;height:64px;object-fit:contain}h1{font-size:22px}h2{font-size:17px;border-bottom:1px solid #ccd8ce;padding-bottom:6px}.event{break-inside:avoid;border-bottom:1px solid #e1e7e2;padding:12px 0;white-space:pre-wrap}.date{font-size:11px;color:#52675a}@media print{body{margin:12mm auto}}</style></head><body><header><img src="${escapeHtml(logoImage)}" alt="QIConect"><div><h1>Prontuário do atendimento</h1><div>${escapeHtml(clinicName)}</div></div></header><p><b>Paciente:</b> ${escapeHtml(detail.appointment.patientName)}<br><b>Terapeuta:</b> ${escapeHtml(detail.appointment.therapistName)}<br><b>Atendimento:</b> ${escapeHtml(formatDate(detail.appointment.startsAt))} · ${escapeHtml(detail.appointment.therapyName)}<br><b>Status atual:</b> ${escapeHtml(statusLabels[currentStatus] ?? currentStatus)}<br><b>Gerado em:</b> ${escapeHtml(generatedAt)}</p><h2>Histórico cronológico</h2>${events.length ? events.map((event) => `<section class="event"><strong>${escapeHtml(event.title)}</strong><div class="date">${escapeHtml(event.date ? formatClinicalDate(event.date) : "Data não informada")}</div><div>${escapeHtml(event.content)}</div></section>`).join("") : "<p>Não há registros clínicos neste atendimento.</p>"}<script>window.onload=()=>window.print()</script></body></html>`);
+  popup.document.close();
+}
+
 export function EncounterDetailPage({ appointmentId, session, onBack }: EncounterDetailPageProps) {
   const [detail, setDetail] = useState<EncounterDetails | null>(null);
   const [tab, setTab] = useState<EncounterTab>("anamnesis");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [showFinalizeConfirm, setShowFinalizeConfirm] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const timerStorageKey = `qiconect:encounter-timer-stopped:${appointmentId}`;
+  const timerStartedAtStorageKey = `qiconect:encounter-timer-started:${appointmentId}`;
+  const [timerStartedAt, setTimerStartedAt] = useState<string | null>(() => typeof window === "undefined" ? null : window.localStorage.getItem(timerStartedAtStorageKey));
+  const [stoppedElapsedSeconds, setStoppedElapsedSeconds] = useState<number | null>(() => {
+    if (typeof window === "undefined") return null;
+    const stored = window.localStorage.getItem(timerStorageKey);
+    return stored !== null && Number.isFinite(Number(stored)) ? Number(stored) : null;
+  });
   const [selectedQuestionIds, setSelectedQuestionIds] = useState<string[]>([]);
   const [editingAnamnesisId, setEditingAnamnesisId] = useState<string | null>(null);
   const [anamnesisSaved, setAnamnesisSaved] = useState(false);
@@ -273,11 +309,32 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
   useEffect(() => {
     const attendance = detail?.attendance;
     if (attendance?.status !== "IN_PROGRESS") return;
-    const updateElapsed = () => setElapsedSeconds(Math.max(0, Math.floor((Date.now() - new Date(attendance.startedAt).getTime()) / 1000)));
+    if (stoppedElapsedSeconds !== null) {
+      setElapsedSeconds(stoppedElapsedSeconds);
+      return;
+    }
+    const updateElapsed = () => setElapsedSeconds(Math.max(0, Math.floor((Date.now() - new Date(timerStartedAt ?? attendance.startedAt).getTime()) / 1000)));
     updateElapsed();
     const timerId = window.setInterval(updateElapsed, 1000);
     return () => window.clearInterval(timerId);
-  }, [detail?.attendance?.startedAt, detail?.attendance?.status]);
+  }, [detail?.attendance?.startedAt, detail?.attendance?.status, stoppedElapsedSeconds, timerStartedAt]);
+
+  function stopSessionTimer() {
+    if (!detail?.attendance || stoppedElapsedSeconds !== null) return;
+    const stoppedAtSeconds = Math.max(0, Math.floor((Date.now() - new Date(detail.attendance.startedAt).getTime()) / 1000));
+    window.localStorage.setItem(timerStorageKey, String(stoppedAtSeconds));
+    setElapsedSeconds(stoppedAtSeconds);
+    setStoppedElapsedSeconds(stoppedAtSeconds);
+  }
+
+  function resumeSessionTimer() {
+    if (stoppedElapsedSeconds === null) return;
+    const nextStartedAt = new Date(Date.now() - stoppedElapsedSeconds * 1000).toISOString();
+    window.localStorage.setItem(timerStartedAtStorageKey, nextStartedAt);
+    window.localStorage.removeItem(timerStorageKey);
+    setTimerStartedAt(nextStartedAt);
+    setStoppedElapsedSeconds(null);
+  }
 
   async function mutate(path: string, method: "POST" | "PATCH", body: object, successMessage: string): Promise<boolean> {
     setBusy(true);
@@ -532,6 +589,12 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
     ).then(() => setEvolutionForm((current) => ({ ...current, description: "", evolvedAt: today() })));
   }
 
+  async function finalizeAttendance() {
+    setShowFinalizeConfirm(false);
+    if (stoppedElapsedSeconds === null) stopSessionTimer();
+    await mutate(`/encounters/${appointmentId}/finalize`, "POST", {}, "Atendimento finalizado. O prontuário está disponível para consulta.");
+  }
+
   function openStageFeedback(stage: ProtocolStage) {
     const feedback = stage.feedback;
     setFeedbackForm({
@@ -570,8 +633,9 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
 
   const isTherapist = session.activeClinic.role === "THERAPIST";
   const isPatient = session.activeClinic.role === "PATIENT";
+  const isFinalized = detail.attendance?.status === "FINALIZED";
   const canEdit = isTherapist && detail.attendance?.status === "IN_PROGRESS";
-  const canUploadAttachments = canEdit || (session.activeClinic.role === "PATIENT" && detail.attendance?.examRequested === true);
+  const canUploadAttachments = !isFinalized && (canEdit || (session.activeClinic.role === "PATIENT" && detail.attendance?.examRequested === true));
   const canStart = isTherapist && (
     (!detail.attendance && detail.appointment.appointmentStatus === "CONFIRMED")
     || detail.attendance?.status === "ACTIVE"
@@ -598,7 +662,7 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
           <p className="muted">{formatDate(detail.appointment.startsAt)} · {detail.appointment.therapyName}</p>
         </div>
         <span className={`status-pill status-${(detail.attendance?.status ?? detail.appointment.appointmentStatus).toLowerCase()}`}>
-          {detail.attendance ? ({ ACTIVE: "Ativo", INACTIVE: "Inativo", CONFIRMED: "Confirmado", CANCELLED: "Cancelado", RESCHEDULED: "Remarcado", WAITING: "Aguardando", IN_PROGRESS: "Em atendimento", PAID: "Pago" } as Record<string, string>)[detail.attendance.status] : "Agendado"}
+          {detail.attendance ? ({ ACTIVE: "Ativo", INACTIVE: "Inativo", CONFIRMED: "Confirmado", CANCELLED: "Cancelado", RESCHEDULED: "Remarcado", WAITING: "Aguardando", IN_PROGRESS: "Em atendimento", PAID: "Pago", FINALIZED: "Finalizado" } as Record<string, string>)[detail.attendance.status] : "Agendado"}
         </span>
       </div>
 
@@ -607,7 +671,7 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
 
       <section className="encounter-session-bar">
         <div>
-          <span className="eyebrow">{detail.attendance?.status === "IN_PROGRESS" ? "Cronômetro da sessão" : "Paciente"}</span>
+          <span className="eyebrow">{detail.attendance?.status === "IN_PROGRESS" ? "Tempo da Sessão" : "Paciente"}</span>
           <strong className={detail.attendance?.status === "IN_PROGRESS" ? "encounter-timer" : "encounter-patient-name"}>
             {detail.attendance?.status === "IN_PROGRESS"
               ? formatElapsed(elapsedSeconds)
@@ -615,11 +679,13 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
           </strong>
         </div>
         {canStart && <button className="button button-primary" disabled={busy} onClick={() => void startAttendance()}>{busy ? "Iniciando..." : "Iniciar atendimento"}</button>}
+        {isTherapist && detail.attendance?.status === "IN_PROGRESS" && <button type="button" className="button button-secondary" onClick={() => stoppedElapsedSeconds === null ? stopSessionTimer() : resumeSessionTimer()}>{stoppedElapsedSeconds === null ? "Parar Cronômetro" : "Reiniciar Cronômetro"}</button>}
         {!isTherapist && <span className="soft-badge">Consulta somente leitura</span>}
       </section>
 
       {!detail.attendance && <p className="notice-card"><span className="notice-icon">i</span><span>Os registros clínicos ficam disponíveis após o terapeuta iniciar o atendimento.</span></p>}
 
+      <div className="encounter-tabbar">
       <div className="encounter-tabs" role="tablist" aria-label="Guias do atendimento">
         {tabs.map((item) => (
           <button
@@ -639,6 +705,8 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
             {item.label}
           </button>
         ))}
+      </div>
+      <button type="button" className="button button-secondary encounter-prontuario-button" onClick={() => printProntuario(detail, session.activeClinic.name)}>Gerar Prontuário</button>
       </div>
 
       {tab === "anamnesis" && (
@@ -850,7 +918,7 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
                               <div><span className="eyebrow">Etapa {item.sequence}</span><h4>{item.stepDescription}</h4></div>
                               <span className={`status-pill status-${item.status.toLowerCase()}`}>{stageStatusLabels[item.status]}</span>
                             </div>
-                            {(item.startsAt || item.endsAt) && <p className="muted">Período: {item.startsAt ?? "—"} a {item.endsAt ?? "—"}</p>}
+                            {(item.startsAt || item.endsAt) && <p className="muted">Período: {formatClinicalDate(item.startsAt)} até {formatClinicalDate(item.endsAt)}</p>}
                             {item.stepNotes && <p className="encounter-record-description">{item.stepNotes}</p>}
                             {canEdit && (
                               <label className="encounter-status-field">Status da etapa
@@ -926,7 +994,7 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
                       {protocol.stages.map((stage) => (
                         <section className="encounter-evolution-stage" key={stage.diagnosisProtocolId}>
                           <div className="encounter-stage-heading">
-                            <div><span className="eyebrow">Etapa {stage.sequence}</span><h4>{stage.stepDescription}</h4><span className="muted">Início da etapa: {formatClinicalDate(stage.startsAt)}</span></div>
+                            <div><span className="eyebrow">Etapa {stage.sequence}</span><h4>{stage.stepDescription}</h4><span className="encounter-stage-start-date">Início da etapa: {formatClinicalDate(stage.startsAt)}</span></div>
                             <span className={`status-pill status-${stage.status.toLowerCase()}`}>{stageStatusLabels[stage.status]}</span>
                           </div>
                           {stage.evolutions.length === 0 ? <p className="empty-state">Ainda não há evoluções registradas para esta etapa.</p> : (
@@ -973,6 +1041,8 @@ export function EncounterDetailPage({ appointmentId, session, onBack }: Encounte
           )}
         </section>
       )}
+      {isTherapist && detail.attendance?.status === "IN_PROGRESS" && <div className="encounter-finalize-footer"><button type="button" className="button button-danger" disabled={busy} onClick={() => setShowFinalizeConfirm(true)}>Finalizar Atendimento</button></div>}
+      {showFinalizeConfirm && <div className="encounter-confirm-overlay" role="presentation"><section className="encounter-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="finalize-dialog-title" aria-describedby="finalize-dialog-description"><h2 id="finalize-dialog-title">ATENÇÃO!</h2><p id="finalize-dialog-description">Depois de finalizar, não será possível inserir ou alterar informações. O atendimento continuará disponível para consulta.</p><div className="encounter-confirm-actions"><button type="button" className="button button-secondary" disabled={busy} onClick={() => setShowFinalizeConfirm(false)}>Cancelar</button><button type="button" className="button button-danger" disabled={busy} onClick={() => void finalizeAttendance()}>{busy ? "Finalizando..." : "Confirmar finalização"}</button></div></section></div>}
     </div>
   );
 }

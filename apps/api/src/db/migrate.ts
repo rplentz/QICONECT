@@ -33,6 +33,7 @@ export function migrateDatabase(database: Database.Database): void {
       sugestao TEXT,
       avaliacao_melhora INTEGER
     )`);
+    database.prepare("INSERT OR IGNORE INTO STATUS(id,nome) VALUES(9,'Finalizado')").run();
     return;
   }
 

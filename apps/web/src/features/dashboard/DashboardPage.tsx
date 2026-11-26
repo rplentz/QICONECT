@@ -99,7 +99,7 @@ function formatAppointmentDate(value: string, timezone: string): { day: string; 
 
 function statusLabel(status: Appointment["status"]): string {
   const labels: Record<Appointment["status"], string> = {
-    CONFIRMED: "Confirmado", CANCELLED: "Cancelado", RESCHEDULED: "Remarcado", WAITING: "Aguardando", IN_PROGRESS: "Em atendimento", PAID: "Pago", ACTIVE: "Ativo", INACTIVE: "Inativo"
+    CONFIRMED: "Confirmado", CANCELLED: "Cancelado", RESCHEDULED: "Remarcado", WAITING: "Aguardando", IN_PROGRESS: "Em atendimento", PAID: "Pago", ACTIVE: "Ativo", INACTIVE: "Inativo", FINALIZED: "Finalizado"
   };
   return labels[status];
 }

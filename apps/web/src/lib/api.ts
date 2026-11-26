@@ -73,7 +73,7 @@ export interface Appointment {
   therapyId: string;
   startsAt: string;
   endsAt: string;
-  status: "ACTIVE" | "INACTIVE" | "CONFIRMED" | "CANCELLED" | "RESCHEDULED" | "WAITING" | "IN_PROGRESS" | "PAID";
+  status: "ACTIVE" | "INACTIVE" | "CONFIRMED" | "CANCELLED" | "RESCHEDULED" | "WAITING" | "IN_PROGRESS" | "PAID" | "FINALIZED";
   therapyName: string;
   patientName: string;
   therapistName: string;

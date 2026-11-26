@@ -221,7 +221,7 @@ export function App() {
         <main className="main-content">
           {error && <div className="alert alert-error global-alert">{error}<button onClick={() => setError("")}>Fechar</button></div>}
           {page === "dashboard" && <DashboardPage session={session} onOpenPatientEncounters={(patientId) => { setSelectedPatientId(patientId); setPage("patients"); }} onOpenEncounter={(appointmentId) => setPage(`encounter:${appointmentId}`)} />}
-          {page === "appointments" && <AppointmentsPage session={session} />}
+          {page === "appointments" && <AppointmentsPage session={session} onOpenEncounter={(appointmentId) => setPage(`encounter:${appointmentId}`)} />}
           {page === "encounters" && <EncountersPage session={session} patientId={encounterPatientId} onOpen={(appointmentId) => setPage(`encounter:${appointmentId}`)} />}
           {activeEncounterId && <EncounterDetailPage key={activeEncounterId} appointmentId={activeEncounterId} session={session} onBack={() => setPage(selectedPatientId ? "patients" : "encounters")} />}
           {page === "patients" && <PatientsPage session={session} selectedPatientId={selectedPatientId} onSelectPatient={setSelectedPatientId} onClearSelection={() => setSelectedPatientId(undefined)} onOpenEncounters={(patientId) => { setEncounterPatientId(patientId); setPage("encounters"); }} onOpenEncounter={(appointmentId) => setPage(`encounter:${appointmentId}`)} />}

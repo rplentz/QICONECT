@@ -3,13 +3,14 @@ import { apiRequest, type Appointment, type Patient, type Session, type Therapis
 
 interface AppointmentsPageProps {
   session: Session;
+  onOpenEncounter: (appointmentId: string) => void;
 }
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
-export function AppointmentsPage({ session }: AppointmentsPageProps) {
+export function AppointmentsPage({ session, onOpenEncounter }: AppointmentsPageProps) {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [therapists, setTherapists] = useState<Therapist[]>([]);
   const [therapies, setTherapies] = useState<Therapy[]>([]);
@@ -143,7 +144,7 @@ export function AppointmentsPage({ session }: AppointmentsPageProps) {
         {items.map((appointment) => (
           <article className="appointment-row" key={appointment.id}>
             <div className="appointment-date"><strong>{new Intl.DateTimeFormat("pt-BR", { day: "2-digit" }).format(new Date(appointment.startsAt))}</strong><span>{new Intl.DateTimeFormat("pt-BR", { month: "short" }).format(new Date(appointment.startsAt)).replace(".", "")}</span></div>
-            <div className="appointment-main"><strong>{appointment.therapyName}</strong><span className="muted">{session.activeClinic.role === "PATIENT" ? appointment.therapistName : appointment.patientName}</span></div>
+            <div className="appointment-main"><strong>{session.activeClinic.role === "PATIENT" && appointment.status === "IN_PROGRESS" ? <button type="button" className="patient-attendance-link" onClick={() => onOpenEncounter(appointment.id)}>{appointment.therapyName}</button> : appointment.therapyName}</strong><span className="muted">{session.activeClinic.role === "PATIENT" ? appointment.therapistName : appointment.patientName}</span></div>
             <span className="appointment-time">{formatDate(appointment.startsAt)}</span>
             <span className={`status-pill status-${appointment.status.toLowerCase()}`}>{({ CONFIRMED: "Confirmado", CANCELLED: "Cancelado", RESCHEDULED: "Remarcado", WAITING: "Aguardando", IN_PROGRESS: "Em atendimento", PAID: "Pago", ACTIVE: "Ativo", INACTIVE: "Inativo" } as Record<string, string>)[appointment.status]}</span>
             {showActions && isTherapist && appointment.status === "CONFIRMED" && <button className="button button-success" onClick={() => void markInProgress(appointment)}>Iniciar atendimento</button>}

@@ -12,7 +12,7 @@ function formatDate(value: string) {
 }
 
 const statusLabels: Record<EncounterSummary["appointmentStatus"], string> = {
-    CONFIRMED: "Confirmado", CANCELLED: "Cancelado", RESCHEDULED: "Remarcado", WAITING: "Aguardando", IN_PROGRESS: "Em atendimento", PAID: "Pago", ACTIVE: "Ativo", INACTIVE: "Inativo"
+    CONFIRMED: "Confirmado", CANCELLED: "Cancelado", RESCHEDULED: "Remarcado", WAITING: "Aguardando", IN_PROGRESS: "Em atendimento", PAID: "Pago", ACTIVE: "Ativo", INACTIVE: "Inativo", FINALIZED: "Finalizado"
   };
 
 export function EncountersPage({ session, patientId, onOpen }: EncountersPageProps) {

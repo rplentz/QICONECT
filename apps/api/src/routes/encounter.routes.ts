@@ -10,7 +10,7 @@ import { HttpError } from "../utils/http-error.js";
 
 export const encounterRouter=Router();
 const uploadRoot=fileURLToPath(new URL("../../../../data/uploads/",import.meta.url));
-const statusName=(id:number)=>({1:"ACTIVE",2:"INACTIVE",3:"CONFIRMED",4:"CANCELLED",5:"RESCHEDULED",6:"WAITING",7:"IN_PROGRESS",8:"PAID"} as Record<number,string>)[id]??"WAITING";
+const statusName=(id:number)=>({1:"ACTIVE",2:"INACTIVE",3:"CONFIRMED",4:"CANCELLED",5:"RESCHEDULED",6:"WAITING",7:"IN_PROGRESS",8:"PAID",9:"FINALIZED"} as Record<number,string>)[id]??"WAITING";
 function appointment(id:number,clinicId:number){const row=db.prepare(`SELECT a.id,a.paciente_id AS patientId,a.terapeuta_id AS therapistId,a.terapia_id AS therapyId,
  a.dt_inicio AS startsAt,a.dt_fim AS endsAt,a.status,t.nome AS therapyName,pu.nome AS patientName,tu.nome AS therapistName
  FROM AGENDA a JOIN PACIENTE p ON p.id=a.paciente_id JOIN USUARIO pu ON pu.id=p.usuario_id
@@ -22,6 +22,10 @@ function guard(row:Record<string,any>,auth:ReturnType<typeof getAuth>){
  if(auth.role==="THERAPIST" && Number(db.prepare("SELECT id FROM TERAPEUTA WHERE usuario_id=?").pluck().get(Number(auth.userId)))!==row.therapistId) throw new HttpError(403,"FORBIDDEN","Você só pode consultar seus atendimentos.");
 }
 function getAttendance(row:Record<string,any>){return db.prepare("SELECT * FROM ATENDIMENTO WHERE paciente_id=? AND terapeuta_id=? AND terapia_id=? AND dt_atend=? ORDER BY id DESC LIMIT 1").get(row.patientId,row.therapistId,row.therapyId,row.startsAt) as Record<string,any>|undefined;}
+encounterRouter.use("/encounters/:appointmentId",requireAuth,(request,response,next)=>{
+ if(request.method==="GET"||request.method==="HEAD"||request.path.endsWith("/start")||request.path.endsWith("/finalize")){next();return;}
+ try{const auth=getAuth(request);const row=appointment(z.coerce.number().positive().parse(request.params.appointmentId),Number(auth.clinicId));guard(row,auth);const attendance=getAttendance(row);if(!attendance||Number(attendance.status)!==7)throw new HttpError(409,"ATTENDANCE_FINALIZED","Este atendimento não aceita novos registros.");next();}catch(error){next(error);}
+});
 function details(row:Record<string,any>,clinicId:number){
  const attendance=getAttendance(row);
  if(attendance&&Number(attendance.status)===7&&!attendance.dt_inicio_real){const firstClinicalEntry=db.prepare("SELECT MIN(dt_registro) FROM ANAMNESE WHERE atendimento_id=?").pluck().get(attendance.id) as string|null;attendance.dt_inicio_real=firstClinicalEntry||new Date().toISOString();db.prepare("UPDATE ATENDIMENTO SET dt_inicio_real=? WHERE id=? AND dt_inicio_real IS NULL").run(attendance.dt_inicio_real,attendance.id);}
@@ -49,7 +53,7 @@ function details(row:Record<string,any>,clinicId:number){
   FROM DIAGNOSTICO_PROTOCOLO dp JOIN DIAGNOSTICO d ON d.id=dp.diagnostico_id
   JOIN PROTOCOLO_ETAPA st ON st.id=dp.protocolo_etapa_id JOIN PROTOCOLO p ON p.id=st.protocolo_id
   WHERE d.paciente_id=? AND d.terapeuta_id=? ORDER BY d.dt_diagnostico IS NULL,d.dt_diagnostico DESC,d.id DESC,p.nome,st.dt_inicio IS NULL,st.dt_inicio DESC,st.sequencia DESC`).all(row.patientId,row.therapistId) as Array<Record<string,any>>;
- const statusMap=(id:number)=>({1:"ACTIVE",2:"INACTIVE",3:"CONFIRMED",4:"CANCELLED",5:"RESCHEDULED",6:"WAITING",7:"IN_PROGRESS",8:"PAID"} as Record<number,string>)[id]??"WAITING";
+ const statusMap=(id:number)=>({1:"ACTIVE",2:"INACTIVE",3:"CONFIRMED",4:"CANCELLED",5:"RESCHEDULED",6:"WAITING",7:"IN_PROGRESS",8:"PAID",9:"FINALIZED"} as Record<number,string>)[id]??"WAITING";
  const evolutions=db.prepare(`SELECT e.id,e.diagnostico_protocolo_id AS diagnosisProtocolId,e.descricao AS description,e.dt_evolucao AS evolvedAt,e.status,
   d.descricao AS diagnosisDescription,p.nome AS protocolName,st.sequencia AS sequence,st.descricao AS stepDescription
   FROM EVOLUCAO e JOIN DIAGNOSTICO_PROTOCOLO dp ON dp.id=e.diagnostico_protocolo_id JOIN DIAGNOSTICO d ON d.id=dp.diagnostico_id
@@ -118,6 +122,13 @@ encounterRouter.post("/encounters/:appointmentId/start",requireAuth,requireRole(
  }
  response.json({attendance:att,created:true});
 }catch(e){next(e);}});
+encounterRouter.post("/encounters/:appointmentId/finalize",requireAuth,requireRole("THERAPIST"),(request,response,next)=>{try{
+ const auth=getAuth(request);const row=appointment(z.coerce.number().positive().parse(request.params.appointmentId),Number(auth.clinicId));guard(row,auth);const attendance=getAttendance(row);
+ if(!attendance)throw new HttpError(409,"ATTENDANCE_NOT_STARTED","Inicie o atendimento antes de finalizá-lo.");
+ if(Number(attendance.status)===9){response.json({status:"FINALIZED"});return;}
+ if(Number(attendance.status)!==7)throw new HttpError(409,"ATTENDANCE_NOT_ACTIVE","Somente atendimentos em andamento podem ser finalizados.");
+ db.prepare("UPDATE ATENDIMENTO SET status=9 WHERE id=? AND status=7").run(attendance.id);response.json({status:"FINALIZED"});
+}catch(e){next(e);}});
 encounterRouter.post("/encounters/:appointmentId/exam-request",requireAuth,requireRole("THERAPIST"),(request,response,next)=>{try{
  const auth=getAuth(request);const row=appointment(z.coerce.number().positive().parse(request.params.appointmentId),Number(auth.clinicId));guard(row,auth);const att=getAttendance(row);
  if(!att)throw new HttpError(409,"ATTENDANCE_NOT_STARTED","Inicie o atendimento antes de solicitar arquivos.");
@@ -163,7 +174,7 @@ encounterRouter.post("/encounters/:appointmentId/protocol-catalog/:protocolId/st
  const id=db.prepare("INSERT INTO PROTOCOLO_ETAPA(protocolo_id,sequencia,terapia_id,dt_inicio,dt_fim,descricao,obs) VALUES(?,?,?,?,?,?,?)").run(protocolId,sequence,row.therapyId,input.startsAt||null,input.endsAt||null,input.description,input.notes?.trim()||null).lastInsertRowid;
  response.status(201).json({id:String(id),sequence,protocolId:String(protocolId)});
 }catch(e){next(e);}});
-encounterRouter.patch("/encounters/:appointmentId/protocol-stages/:diagnosisProtocolId",requireAuth,requireRole("THERAPIST"),(request,response,next)=>{try{const statuses:Record<string,number>={ACTIVE:1,INACTIVE:2,CONFIRMED:3,CANCELLED:4,RESCHEDULED:5,WAITING:6,IN_PROGRESS:7,PAID:8};const input=z.object({status:z.enum(["ACTIVE","INACTIVE","CONFIRMED","CANCELLED","RESCHEDULED","WAITING","IN_PROGRESS","PAID"]),notes:z.string().optional()}).parse(request.body);const id=z.coerce.number().parse(request.params.diagnosisProtocolId);db.prepare("UPDATE DIAGNOSTICO_PROTOCOLO SET status=? WHERE id=?").run(statuses[input.status],id);response.json({id:String(id),status:input.status});}catch(e){next(e);}});
+encounterRouter.patch("/encounters/:appointmentId/protocol-stages/:diagnosisProtocolId",requireAuth,requireRole("THERAPIST"),(request,response,next)=>{try{const statuses:Record<string,number>={ACTIVE:1,INACTIVE:2,CONFIRMED:3,CANCELLED:4,RESCHEDULED:5,WAITING:6,IN_PROGRESS:7,PAID:8,FINALIZED:9};const input=z.object({status:z.enum(["ACTIVE","INACTIVE","CONFIRMED","CANCELLED","RESCHEDULED","WAITING","IN_PROGRESS","PAID","FINALIZED"]),notes:z.string().optional()}).parse(request.body);const id=z.coerce.number().parse(request.params.diagnosisProtocolId);const update=db.transaction(()=>{const result=db.prepare("UPDATE DIAGNOSTICO_PROTOCOLO SET status=? WHERE id=?").run(statuses[input.status],id);if(!result.changes)throw new HttpError(404,"PROTOCOL_STAGE_NOT_FOUND","Etapa do protocolo não encontrada.");if(input.status==="FINALIZED")db.prepare("UPDATE EVOLUCAO SET status=9 WHERE diagnostico_protocolo_id=?").run(id);});update.immediate();response.json({id:String(id),status:input.status});}catch(e){next(e);}});
 encounterRouter.post("/encounters/:appointmentId/evolutions",requireAuth,requireRole("THERAPIST"),(request,response,next)=>{try{
  const auth=getAuth(request);const row=appointment(Number(request.params.appointmentId),Number(auth.clinicId));guard(row,auth);
  const input=z.object({diagnosisProtocolId:z.coerce.number().positive(),description:z.string().trim().min(2).max(4000),evolvedAt:z.string().optional(),status:z.enum(["ACTIVE","INACTIVE","CONFIRMED","CANCELLED","RESCHEDULED","WAITING","IN_PROGRESS","PAID"]).optional()}).parse(request.body);
